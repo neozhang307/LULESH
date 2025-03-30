@@ -1644,41 +1644,68 @@ void CalcElemNodeNormals(Real_t pfx[8],
 
 
 
+/*
+ * AddNodeForcesFromElems_kernel - CUDA kernel to distribute element forces to nodes
+ *
+ * This kernel performs a key step in Lagrangian hydrodynamics: calculating the
+ * nodal forces by accumulating contributions from all elements connected to each node.
+ * 
+ * The kernel processing works as follows:
+ * 1. Each thread handles one node
+ * 2. For each node, it identifies all connected elements using connectivity arrays
+ * 3. It accumulates force contributions from each connected element
+ * 4. Finally, it stores the total force for the node
+ */
 __global__
-void AddNodeForcesFromElems_kernel( Index_t numNode,
-                                    Index_t padded_numNode,
-                                    const Int_t* nodeElemCount, 
-                                    const Int_t* nodeElemStart, 
-                                    const Index_t* nodeElemCornerList,
-                                    const Real_t* fx_elem, 
-                                    const Real_t* fy_elem, 
-                                    const Real_t* fz_elem,
-                                    Real_t* fx_node, 
-                                    Real_t* fy_node, 
-                                    Real_t* fz_node,
-                                    const Int_t num_threads)
+void AddNodeForcesFromElems_kernel( Index_t numNode,          // Total number of nodes
+                                    Index_t padded_numNode,    // Padded node count for memory alignment
+                                    const Int_t* nodeElemCount,  // Number of elements connected to each node
+                                    const Int_t* nodeElemStart,  // Starting index in nodeElemCornerList for each node
+                                    const Index_t* nodeElemCornerList, // Map from node to element corners
+                                    const Real_t* fx_elem,     // X-component of element forces
+                                    const Real_t* fy_elem,     // Y-component of element forces
+                                    const Real_t* fz_elem,     // Z-component of element forces
+                                    Real_t* fx_node,           // Output: X-component of nodal forces
+                                    Real_t* fy_node,           // Output: Y-component of nodal forces
+                                    Real_t* fz_node,           // Output: Z-component of nodal forces
+                                    const Int_t num_threads)   // Total number of threads to launch
 {
-    int tid=blockDim.x*blockIdx.x+threadIdx.x;
+    // Calculate global thread ID
+    int tid = blockDim.x*blockIdx.x+threadIdx.x;
+    
+    // Only process valid nodes
     if (tid < num_threads)
     {
+      // Get global node index
       Index_t g_i = tid;
-      Int_t count=nodeElemCount[g_i];
-      Int_t start=nodeElemStart[g_i];
-      Real_t fx,fy,fz;
-      fx=fy=fz=Real_t(0.0);
+      
+      // Get number of elements connected to this node
+      Int_t count = nodeElemCount[g_i];
+      
+      // Get starting index in the corner list for this node
+      Int_t start = nodeElemStart[g_i];
+      
+      // Initialize force accumulators
+      Real_t fx, fy, fz;
+      fx = fy = fz = Real_t(0.0);
 
-      for (int j=0;j<count;j++) 
+      // Loop through all elements connected to this node
+      for (int j=0; j<count; j++) 
       {
-          Index_t pos=nodeElemCornerList[start+j]; // Uncoalesced access here
+          // Find the element corner position
+          // Note: This access pattern can be uncoalesced, potentially hurting performance
+          Index_t pos = nodeElemCornerList[start+j]; // Uncoalesced access here
+          
+          // Accumulate force contributions from this element
           fx += fx_elem[pos]; 
           fy += fy_elem[pos]; 
           fz += fz_elem[pos];
       }
 
-
-      fx_node[g_i]=fx; 
-      fy_node[g_i]=fy; 
-      fz_node[g_i]=fz;
+      // Store the calculated forces back to global memory
+      fx_node[g_i] = fx; 
+      fy_node[g_i] = fy; 
+      fz_node[g_i] = fz;
     }
 }
 
@@ -2976,35 +3003,60 @@ void CalcPositionAndVelocityForNodes(const Real_t u_cut, Domain* domain)
 }
 
 static inline
+/*
+ * LagrangeNodal - Performs node-centered calculations for one timestep
+ *
+ * This function handles the first phase of the Lagrangian simulation:
+ * 1. Calculate forces at nodes from element contributions
+ * 2. Compute nodal accelerations based on forces and masses
+ * 3. Apply boundary conditions (e.g., symmetry, free surfaces)
+ * 4. Update node positions and velocities
+ * 5. Synchronize updated values between processes (for MPI)
+ *
+ * This phase focuses on the mesh nodes (vertices) rather than elements.
+ */
 void LagrangeNodal(Domain *domain)
 {
 #ifdef SEDOV_SYNC_POS_VEL_EARLY
-   Domain_member fieldData[6] ;
+   // Array of function pointers for accessing domain data during MPI communication
+   Domain_member fieldData[6];
 #endif
 
-  Real_t u_cut = domain->u_cut ;
+  // Get bulk viscosity cutoff parameter (controls artificial viscosity)
+  Real_t u_cut = domain->u_cut;
 
   /* time of boundary condition evaluation is beginning of step for force and
    * acceleration boundary conditions. */
+  // Step 1: Calculate forces on each node from surrounding elements
+  // This accumulates all forces (internal, external, artificial viscosity)
   CalcForceForNodes(domain);
 
 #if USE_MPI  
 #ifdef SEDOV_SYNC_POS_VEL_EARLY
+   // For MPI: Start receiving position and velocity data from other processes
+   // This is done early to overlap communication with computation
    CommRecv(*domain, MSG_SYNC_POS_VEL, 6,
             domain->sizeX + 1, domain->sizeY + 1, domain->sizeZ + 1,
-            false, false) ;
+            false, false);
 #endif
 #endif
 
+  // Step 2: Calculate accelerations for all nodes (F = ma -> a = F/m)
   CalcAccelerationForNodes(domain);
 
+  // Step 3: Apply boundary conditions to accelerations
+  // This enforces constraints like symmetry planes and free surfaces
   ApplyAccelerationBoundaryConditionsForNodes(domain);
 
+  // Step 4: Update node positions and velocities using calculated accelerations
+  // This applies the time integration scheme (leapfrog method)
   CalcPositionAndVelocityForNodes(u_cut, domain);
 
 #if USE_MPI
 #ifdef SEDOV_SYNC_POS_VEL_EARLY
-  // initialize pointers
+  // For MPI: Synchronize position and velocity data with neighboring processes
+  
+  // initialize raw device pointers for MPI communication
   domain->d_x = domain->x.raw();
   domain->d_y = domain->y.raw();
   domain->d_z = domain->z.raw();
@@ -3013,17 +3065,21 @@ void LagrangeNodal(Domain *domain)
   domain->d_yd = domain->yd.raw();
   domain->d_zd = domain->zd.raw();
 
-  fieldData[0] = &Domain::get_x ;
-  fieldData[1] = &Domain::get_y ;
-  fieldData[2] = &Domain::get_z ;
-  fieldData[3] = &Domain::get_xd ;
-  fieldData[4] = &Domain::get_yd ;
-  fieldData[5] = &Domain::get_zd ;
+  // Set up function pointers to access position and velocity components
+  fieldData[0] = &Domain::get_x;  // x-position
+  fieldData[1] = &Domain::get_y;  // y-position
+  fieldData[2] = &Domain::get_z;  // z-position
+  fieldData[3] = &Domain::get_xd; // x-velocity
+  fieldData[4] = &Domain::get_yd; // y-velocity
+  fieldData[5] = &Domain::get_zd; // z-velocity
 
+  // Send position and velocity data directly from GPU to other processes
   CommSendGpu(*domain, MSG_SYNC_POS_VEL, 6, fieldData,
            domain->sizeX + 1, domain->sizeY + 1, domain->sizeZ + 1,
-           false, false, domain->streams[2]) ;
-  CommSyncPosVelGpu(*domain, &domain->streams[2]) ;
+           false, false, domain->streams[2]);
+  
+  // Complete synchronization of position and velocity data
+  CommSyncPosVelGpu(*domain, &domain->streams[2]);
 #endif
 #endif
 
@@ -4073,105 +4129,159 @@ void ApplyMaterialPropertiesAndUpdateVolume(Domain *domain)
 }
 
 static inline
+/*
+ * LagrangeElements - Performs element-centered calculations for one timestep
+ *
+ * This function handles the second phase of the Lagrangian simulation, focusing on
+ * element (cell) calculations:
+ * 1. Calculate kinematics (velocity gradients, strain rates)
+ * 2. Compute artificial viscosity (q) for shock handling
+ * 3. Apply material properties (equation of state)
+ * 4. Update element volumes and related quantities
+ *
+ * The function manages temporary memory allocation/deallocation and MPI communication
+ * of element-centered quantities between processes.
+ */
 void LagrangeElements(Domain *domain)
 {
+  // Calculate total elements including ghost elements for MPI
   int allElem = domain->numElem +  /* local elem */
                 2*domain->sizeX*domain->sizeY + /* plane ghosts */
                 2*domain->sizeX*domain->sizeZ + /* row ghosts */
                 2*domain->sizeY*domain->sizeZ ; /* col ghosts */
 
+  // Allocate temporary arrays for this phase
+  // vnew: new relative volume
   domain->vnew = Allocator< Vector_d<Real_t> >::allocate(domain->numElem);
+  // Principal strain terms (diagonal components of strain tensor)
   domain->dxx  = Allocator< Vector_d<Real_t> >::allocate(domain->numElem);
   domain->dyy  = Allocator< Vector_d<Real_t> >::allocate(domain->numElem);
   domain->dzz  = Allocator< Vector_d<Real_t> >::allocate(domain->numElem);
 
+  // Coordinate gradients (spatial derivatives in each direction)
   domain->delx_xi    = Allocator< Vector_d<Real_t> >::allocate(domain->numElem);
   domain->delx_eta   = Allocator< Vector_d<Real_t> >::allocate(domain->numElem);
   domain->delx_zeta  = Allocator< Vector_d<Real_t> >::allocate(domain->numElem);
 
+  // Velocity gradients (for all elements including ghosts)
   domain->delv_xi    = Allocator< Vector_d<Real_t> >::allocate(allElem);
   domain->delv_eta   = Allocator< Vector_d<Real_t> >::allocate(allElem);
   domain->delv_zeta  = Allocator< Vector_d<Real_t> >::allocate(allElem);
 
 #if USE_MPI     
+  // For MPI: Start receiving monotonic q gradient data from other processes
   CommRecv(*domain, MSG_MONOQ, 3,
            domain->sizeX, domain->sizeY, domain->sizeZ,
-           true, true) ;
+           true, true);
 #endif
 
   /*********************************************/
   /*  Calc Kinematics and Monotic Q Gradient   */
   /*********************************************/
+  // Step A: Calculate velocity gradients and related terms
+  // This computes how quickly the element is deforming
   CalcKinematicsAndMonotonicQGradient(domain);
 
 #if USE_MPI      
-   Domain_member fieldData[3] ;
+   // For MPI: Send calculated gradient data to other processes
+   Domain_member fieldData[3];
 
-   // initialize pointers
+   // Initialize raw device pointers for MPI communication
    domain->d_delv_xi = domain->delv_xi->raw();
    domain->d_delv_eta = domain->delv_eta->raw();
    domain->d_delv_zeta = domain->delv_zeta->raw();
 
-   fieldData[0] = &Domain::get_delv_xi ;
-   fieldData[1] = &Domain::get_delv_eta ;
-   fieldData[2] = &Domain::get_delv_zeta ;
+   // Set up function pointers for velocity gradient access
+   fieldData[0] = &Domain::get_delv_xi;
+   fieldData[1] = &Domain::get_delv_eta;
+   fieldData[2] = &Domain::get_delv_zeta;
 
+   // Send velocity gradients directly from GPU to other processes
    CommSendGpu(*domain, MSG_MONOQ, 3, fieldData,
             domain->sizeX, domain->sizeY, domain->sizeZ,
-            true, true, domain->streams[2]) ;
-   CommMonoQGpu(*domain, domain->streams[2]) ;
+            true, true, domain->streams[2]);
+   
+   // Complete monotonic q communication
+   CommMonoQGpu(*domain, domain->streams[2]);
 #endif
 
-  Allocator<Vector_d<Real_t> >::free(domain->dxx,domain->numElem);
-  Allocator<Vector_d<Real_t> >::free(domain->dyy,domain->numElem);
-  Allocator<Vector_d<Real_t> >::free(domain->dzz,domain->numElem);
+  // Free temporary arrays no longer needed
+  Allocator<Vector_d<Real_t> >::free(domain->dxx, domain->numElem);
+  Allocator<Vector_d<Real_t> >::free(domain->dyy, domain->numElem);
+  Allocator<Vector_d<Real_t> >::free(domain->dzz, domain->numElem);
 
   /**********************************
   *    Calc Monotic Q Region
   **********************************/
+  // Step B: Calculate artificial viscosity (q) for shock treatment
+  // This helps prevent numerical oscillations near shock fronts
    CalcMonotonicQRegionForElems(domain);
 
-  Allocator<Vector_d<Real_t> >::free(domain->delx_xi,domain->numElem);
-  Allocator<Vector_d<Real_t> >::free(domain->delx_eta,domain->numElem);
-  Allocator<Vector_d<Real_t> >::free(domain->delx_zeta,domain->numElem);
+  // Free more temporary arrays
+  Allocator<Vector_d<Real_t> >::free(domain->delx_xi, domain->numElem);
+  Allocator<Vector_d<Real_t> >::free(domain->delx_eta, domain->numElem);
+  Allocator<Vector_d<Real_t> >::free(domain->delx_zeta, domain->numElem);
 
-  Allocator<Vector_d<Real_t> >::free(domain->delv_xi,allElem);
-  Allocator<Vector_d<Real_t> >::free(domain->delv_eta,allElem);
-  Allocator<Vector_d<Real_t> >::free(domain->delv_zeta,allElem);
+  Allocator<Vector_d<Real_t> >::free(domain->delv_xi, allElem);
+  Allocator<Vector_d<Real_t> >::free(domain->delv_eta, allElem);
+  Allocator<Vector_d<Real_t> >::free(domain->delv_zeta, allElem);
 
-//  printf("\n --Start of ApplyMaterials! \n");
-  ApplyMaterialPropertiesAndUpdateVolume(domain) ;
-//  printf("\n --End of ApplyMaterials! \n");
-  Allocator<Vector_d<Real_t> >::free(domain->vnew,domain->numElem);
+  // Step C: Apply material equation of state and update element volumes
+  // This calculates new pressures, energies, and volumes based on the
+  // material model (ideal gas for Sedov blast wave problem)
+  ApplyMaterialPropertiesAndUpdateVolume(domain);
+  
+  // Free the last temporary array
+  Allocator<Vector_d<Real_t> >::free(domain->vnew, domain->numElem);
 }
 
+/*
+ * CalcTimeConstraintsForElems_kernel - CUDA kernel to calculate timestep constraints
+ * 
+ * This kernel computes the maximum allowable timestep for the next iteration
+ * based on two constraints:
+ * 1. The Courant constraint (mindtcourant) - based on element sound speed and size
+ * 2. The volume change constraint (mindthydro) - limits excessive element deformation
+ *
+ * Each thread calculates constraints for one element, then a parallel reduction
+ * finds the minimum values across all elements in the block.
+ *
+ * Template parameter:
+ *   block_size - Number of threads per block, must match the launch configuration
+ */
 template<int block_size>
 __global__
 #ifdef DOUBLE_PRECISION
-__launch_bounds__(128,16) 
+__launch_bounds__(128,16)  // Optimize register usage for double precision
 #else
-__launch_bounds__(128,16) 
+__launch_bounds__(128,16)  // Optimize register usage for single precision
 #endif
 void CalcTimeConstraintsForElems_kernel(
-    Index_t length,
-    Real_t qqc2, 
-    Real_t dvovmax,
-    Index_t *matElemlist,
-    Real_t *ss,
-    Real_t *vdov,
-    Real_t *arealg,
-    Real_t *dev_mindtcourant,
-    Real_t *dev_mindthydro)
+    Index_t length,        // Total number of elements to process
+    Real_t qqc2,           // Artificial viscosity coefficient squared
+    Real_t dvovmax,        // Maximum allowable volume change ratio
+    Index_t *matElemlist,  // List of material elements to process
+    Real_t *ss,            // Sound speed array
+    Real_t *vdov,          // Volume derivative over volume
+    Real_t *arealg,        // Element characteristic length
+    Real_t *dev_mindtcourant,  // Output: minimum courant timestep per block
+    Real_t *dev_mindthydro)    // Output: minimum hydro timestep per block
 {
+    // Thread ID within block
     int tid = threadIdx.x;
-    int i=blockDim.x*blockIdx.x + tid;
+    // Global thread ID (unique element index)
+    int i = blockDim.x*blockIdx.x + tid;
 
+    // Shared memory for block-level reductions
+    // These arrays store intermediate results during min-finding
     __shared__ volatile Real_t s_mindthydro[block_size];
     __shared__ volatile Real_t s_mindtcourant[block_size];
 
-    Real_t mindthydro = Real_t(1.0e+20) ;
-    Real_t mindtcourant = Real_t(1.0e+20) ;
+    // Initialize to very large values (effectively infinity)
+    Real_t mindthydro = Real_t(1.0e+20);
+    Real_t mindtcourant = Real_t(1.0e+20);
 
+    // Local working variable for hydro timestep
     Real_t dthydro = mindthydro;
     Real_t dtcourant = mindtcourant;
 
@@ -4335,50 +4445,102 @@ void CalcMinDtOneBlock(Real_t* dev_mindthydro, Real_t* dev_mindtcourant, Real_t*
 }
 
 static inline
+/*
+ * CalcTimeConstraintsForElems - Calculate the stable timestep for the next iteration
+ *
+ * This function computes the maximum allowable timestep based on the Courant-Friedrichs-Lewy
+ * (CFL) condition and volume change constraints. It uses two CUDA kernels:
+ * 1. First kernel computes per-block minimum timesteps
+ * 2. Second kernel performs global reduction to find overall minimum
+ *
+ * The timestep calculation is a critical part of explicit simulations to ensure
+ * numerical stability. If the timestep is too large, the simulation can become unstable.
+ */
 void CalcTimeConstraintsForElems(Domain* domain)
 {
+    // Get artificial viscosity coefficient from domain
     Real_t qqc = domain->qqc;
-    Real_t qqc2 = Real_t(64.0) * qqc * qqc ;
-    Real_t dvovmax = domain->dvovmax ;
+    // Square and scale the coefficient (64.0 is a constant for the CFL calculation)
+    Real_t qqc2 = Real_t(64.0) * qqc * qqc;
+    // Maximum allowable relative volume change
+    Real_t dvovmax = domain->dvovmax;
 
+    // Total number of elements to process
     const Index_t length = domain->numElem;
 
-    const int max_dimGrid = 1024;
-    const int dimBlock = 128;
-    int dimGrid=std::min(max_dimGrid,PAD_DIV(length,dimBlock));
+    // Configure kernel launch parameters
+    const int max_dimGrid = 1024;   // Maximum number of blocks
+    const int dimBlock = 128;       // Threads per block
+    // Calculate actual number of blocks needed, with padding
+    int dimGrid = std::min(max_dimGrid, PAD_DIV(length, dimBlock));
 
+    // Configure cache behavior for the kernel - prefer shared memory
+    // This is important because the kernel uses shared memory for reduction
     cudaFuncSetCacheConfig(CalcTimeConstraintsForElems_kernel<dimBlock>, cudaFuncCachePreferShared);
 
-    Vector_d<Real_t>* dev_mindtcourant= Allocator< Vector_d<Real_t> >::allocate(dimGrid);
-    Vector_d<Real_t>* dev_mindthydro  = Allocator< Vector_d<Real_t> >::allocate(dimGrid);
+    // Allocate device memory for per-block minimum timesteps
+    Vector_d<Real_t>* dev_mindtcourant = Allocator< Vector_d<Real_t> >::allocate(dimGrid);
+    Vector_d<Real_t>* dev_mindthydro = Allocator< Vector_d<Real_t> >::allocate(dimGrid);
 
-    CalcTimeConstraintsForElems_kernel<dimBlock> <<<dimGrid,dimBlock>>>
-        (length,qqc2,dvovmax,
-         domain->matElemlist.raw(),domain->ss.raw(),domain->vdov.raw(),domain->arealg.raw(),
-         dev_mindtcourant->raw(),dev_mindthydro->raw());
+    // Launch kernel to compute per-block minimum timesteps
+    // Each block processes a portion of the elements and finds local minimums
+    CalcTimeConstraintsForElems_kernel<dimBlock> <<<dimGrid, dimBlock>>>
+        (length, qqc2, dvovmax,
+         domain->matElemlist.raw(), domain->ss.raw(), domain->vdov.raw(), domain->arealg.raw(),
+         dev_mindtcourant->raw(), dev_mindthydro->raw());
 
     // TODO: if dimGrid < 1024, should launch less threads
-    CalcMinDtOneBlock<max_dimGrid> <<<2,max_dimGrid, max_dimGrid*sizeof(Real_t), domain->streams[1]>>>(dev_mindthydro->raw(),dev_mindtcourant->raw(),domain->dtcourant_h,domain->dthydro_h, dimGrid);
+    // Launch second kernel to find global minimum across all blocks
+    // This kernel performs the final reduction and stores results in domain
+    CalcMinDtOneBlock<max_dimGrid> <<<2, max_dimGrid, max_dimGrid*sizeof(Real_t), domain->streams[1]>>>
+        (dev_mindthydro->raw(), dev_mindtcourant->raw(), domain->dtcourant_h, domain->dthydro_h, dimGrid);
 
-    cudaEventRecord(domain->time_constraint_computed,domain->streams[1]);
+    // Record event to track when timestep calculation is complete
+    // This allows other operations to wait for this calculation to finish
+    cudaEventRecord(domain->time_constraint_computed, domain->streams[1]);
 
-    Allocator<Vector_d<Real_t> >::free(dev_mindtcourant,dimGrid);
-    Allocator<Vector_d<Real_t> >::free(dev_mindthydro,dimGrid);
+    // Free temporary device memory
+    Allocator<Vector_d<Real_t> >::free(dev_mindtcourant, dimGrid);
+    Allocator<Vector_d<Real_t> >::free(dev_mindthydro, dimGrid);
 }
 
 
 static inline
+/* 
+ * LagrangeLeapFrog - Primary computational routine for a single timestep
+ * 
+ * This function implements the main algorithm of LULESH, performing one complete
+ * timestep of the simulation using a leapfrog time integration method.
+ * It consists of three major phases:
+ * 1. Nodal computations (forces, accelerations, positions, velocities)
+ * 2. Element calculations (gradients, material states, volumes)
+ * 3. Timestep calculation based on stability constraints
+ */
 void LagrangeLeapFrog(Domain* domain)
 {
 
    /* calculate nodal forces, accelerations, velocities, positions, with
     * applied boundary conditions and slide surface considerations */
+   // Phase 1: Update node-centered quantities
+   // - Calculates forces at nodes from element contributions
+   // - Computes accelerations based on forces and nodal masses
+   // - Applies boundary conditions (symmetry, free surfaces)
+   // - Updates positions and velocities using time integration
    LagrangeNodal(domain);
 
    /* calculate element quantities (i.e. velocity gradient & q), and update
     * material states */
+   // Phase 2: Update element-centered quantities
+   // - Computes velocity gradients for elements
+   // - Calculates artificial viscosity (q) for shock treatment
+   // - Updates element volumes and material states
+   // - Applies equation of state to compute new pressures and energies
    LagrangeElements(domain);
 
+   // Phase 3: Calculate new timestep based on Courant-Friedrichs-Lewy (CFL) condition
+   // - Computes maximum stable timestep to ensure simulation stability
+   // - Uses both velocity (Courant) and volume change (hydro) constraints
+   // - Selects the most restrictive timestep across all elements
    CalcTimeConstraintsForElems(domain);
 
 }
@@ -4681,67 +4843,87 @@ void VerifyAndWriteFinalOutput(Real_t elapsed_time,
    return ;
 }
 
+/* Main function - entry point for LULESH simulation 
+ * Handles command-line arguments, initializes the domain, runs the simulation,
+ * and outputs performance metrics
+ */
 int main(int argc, char *argv[])
 {
+  // Check for minimum required arguments (program name, grid type, size)
   if (argc < 3) {
     printUsage(argv);
     exit( LFileError );
   }
   
+  // Validate the grid type argument: either -u (unstructured) or -s (structured)
   if ( strcmp(argv[1],"-u") != 0 && strcmp(argv[1],"-s") != 0 ) 
   {
     printUsage(argv);
     exit( LFileError ) ;
   }
 
+  // Optional argument for max iterations (allows early termination)
   int num_iters = -1;
   if (argc == 5) {
     num_iters = atoi(argv[4]);
   }
 
+  // Flag to indicate whether we're using structured or unstructured mesh
   bool structured = ( strcmp(argv[1],"-s") == 0 );
 
+  // Variables for tracking MPI processes
   Int_t numRanks ;
   Int_t myRank ;
 
 #if USE_MPI   
   Domain_member fieldData ;
 
+  // Initialize MPI and get process info
   MPI_Init(&argc, &argv) ;
-  MPI_Comm_size(MPI_COMM_WORLD, &numRanks) ;
-  MPI_Comm_rank(MPI_COMM_WORLD, &myRank) ;
+  MPI_Comm_size(MPI_COMM_WORLD, &numRanks) ;  // Total number of processes
+  MPI_Comm_rank(MPI_COMM_WORLD, &myRank) ;    // Current process ID
 #else
+  // For non-MPI builds, single process
   numRanks = 1;
   myRank = 0;
 #endif
 
+  // Initialize CUDA environment for this MPI rank
   cuda_init(myRank);
 
   /* assume cube subdomain geometry for now */
+  // Number of elements in each dimension from command line
   Index_t nx = atoi(argv[2]);
 
+  // Main domain object that holds all simulation data
   Domain *locDom ;
 
   // Set up the mesh and decompose. Assumes regular cubes for now
+  // Calculate this process's position in the 3D grid of processes
   Int_t col, row, plane, side;
   InitMeshDecomp(numRanks, myRank, &col, &row, &plane, &side);
 
   // TODO: change default nr to 11
-  Int_t nr = 11;
-  Int_t balance = 1;
-  Int_t cost = 1;
+  // Domain region parameters for load balancing experiments
+  Int_t nr = 11;      // Number of regions
+  Int_t balance = 1;  // Region assignment algorithm
+  Int_t cost = 1;     // Cost multiplier for evaluating equation of state
 
   // TODO: modify this constructor to account for new fields
   // TODO: setup communication buffers
+  // Create the domain - sets up mesh, initializes physical variables
   locDom = NewDomain(argv, numRanks, col, row, plane, nx, side, structured, nr, balance, cost); 
 
 #if USE_MPI   
    // copy to the host for mpi transfer
+   // MPI communication requires data in host memory
    locDom->h_nodalMass = locDom->nodalMass;
 
+   // Function pointer to access nodal mass data
    fieldData = &Domain::get_nodalMass;
 
    // Initial domain boundary communication 
+   // Exchange ghost node data with neighboring processes
    CommRecv(*locDom, MSG_COMM_SBN, 1,
             locDom->sizeX + 1, locDom->sizeY + 1, locDom->sizeZ + 1,
             true, false) ;
@@ -4751,17 +4933,22 @@ int main(int argc, char *argv[])
    CommSBN(*locDom, 1, &fieldData) ;
 
    // copy back to the device
+   // After MPI exchange, move updated data back to GPU
    locDom->nodalMass = locDom->h_nodalMass;
 
    // End initialization
+   // Wait for all processes to complete initialization
    MPI_Barrier(MPI_COMM_WORLD);
 #endif
 
+  // Set CUDA cache preference to favor L1 cache for better performance
   cudaDeviceSetCacheConfig(cudaFuncCachePreferL1);
 
   /* timestep to solution */
+  // Iteration counter
   int its=0;
 
+  // Print simulation parameters (only from rank 0)
   if (myRank == 0) {
     if (structured)
       printf("Running until t=%f, Problem size=%dx%dx%d\n",locDom->stoptime,nx,nx,nx);
@@ -4769,8 +4956,10 @@ int main(int argc, char *argv[])
       printf("Running until t=%f, Problem size=%d \n",locDom->stoptime,locDom->numElem);
   }
 
+  // Start CUDA profiling for performance analysis
   cudaProfilerStart();
 
+  // Start timer for measuring performance
 #if USE_MPI   
    double start = MPI_Wtime();
 #else
@@ -4778,27 +4967,34 @@ int main(int argc, char *argv[])
    gettimeofday(&start, NULL) ;
 #endif
 
+  // Main simulation loop - continues until simulation time reaches stop time
   while(locDom->time_h < locDom->stoptime)
   {
     // this has been moved after computation of volume forces to hide launch latencies
     //TimeIncrement(locDom) ;
 
+    // Execute one timestep of the Lagrangian hydrodynamics simulation
     LagrangeLeapFrog(locDom) ;
 
+    // Verify solution is still valid, handles errors if any
     checkErrors(locDom,its,myRank);
 
+    // Optionally print progress information
     #if LULESH_SHOW_PROGRESS
      if (myRank == 0) 
 	 printf("cycle = %d, time = %e, dt=%e\n", its+1, double(locDom->time_h), double(locDom->deltatime_h) ) ;
     #endif
     its++;
+    // Exit early if we've reached the specified iteration limit
     if (its == num_iters) break;
   }
 
   // make sure GPU finished its work
+  // Synchronize to ensure all GPU operations are complete
   cudaDeviceSynchronize();
 
 // Use reduced max elapsed time
+   // Calculate elapsed time for this process
    double elapsed_time;
 #if USE_MPI   
    elapsed_time = MPI_Wtime() - start;
@@ -4808,6 +5004,8 @@ int main(int argc, char *argv[])
    elapsed_time = (double)(end.tv_sec - start.tv_sec) + ((double)(end.tv_usec - start.tv_usec))/1000000 ;
 #endif
 
+   // For MPI, find the maximum time across all processes
+   // (overall performance is limited by slowest process)
    double elapsed_timeG;
 #if USE_MPI   
    MPI_Reduce(&elapsed_time, &elapsed_timeG, 1, MPI_DOUBLE,
@@ -4816,17 +5014,22 @@ int main(int argc, char *argv[])
    elapsed_timeG = elapsed_time;
 #endif
 
+  // Stop CUDA profiling
   cudaProfilerStop();
 
+  // Verify results and output performance metrics (only from rank 0)
   if (myRank == 0) 
     VerifyAndWriteFinalOutput(elapsed_timeG, *locDom, its, nx, numRanks, structured);
 
 #ifdef SAMI
+  // Optional: dump domain data for visualization
   DumpDomain(locDom) ;
 #endif
+  // Reset CUDA device to clean state
   cudaDeviceReset();
 
 #if USE_MPI
+   // Finalize MPI
    MPI_Finalize() ;
 #endif
 
