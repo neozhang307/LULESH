@@ -380,7 +380,7 @@ __device__ inline real4 FMAX(real4 arg1, real4 arg2);
 __device__ inline real8 FMAX(real8 arg1, real8 arg2);
 
 // Core computation functions
-Real_t CalcElemVolume(const Real_t x[8], const Real_t y[8], const Real_t z[8]);
+__host__ __device__ Real_t CalcElemVolume(const Real_t x[8], const Real_t y[8], const Real_t z[8]);
 void CalcKinematicsForElems(Domain& domain, Real_t deltaTime, Index_t numElem);
 void CalcLagrangeElements(Domain& domain, Real_t* vnew);
 void CalcQForElems(Domain& domain);

@@ -94,12 +94,12 @@ void printUsage(char *argv[])
 }
 
 // Initialize CUDA context for GPU
-void cuda_init(Int_t rank)
+void cuda_init(int rank)
 {
     Int_t deviceCount, dev;
     cudaDeviceProp cuda_deviceProp;
     
-    cudaGetDeviceCount(&deviceCount);
+    cudaSafeCall( cudaGetDeviceCount(&deviceCount) );
     if (deviceCount == 0) {
         fprintf(stderr, "cuda_init(): no devices supporting CUDA.\n");
         exit(1);
@@ -113,17 +113,28 @@ void cuda_init(Int_t rank)
         exit(1);
     }
 
-    cudaSetDevice(dev);
-    printf("Rank %d using CUDA device %d\n", rank, dev);
+    cudaSafeCall( cudaSetDevice(dev) );
 
-    cudaGetDeviceProperties(&cuda_deviceProp, dev);
-    printf("Device %d: \"%s\" with Compute %d.%d capability\n", 
-           dev, cuda_deviceProp.name, cuda_deviceProp.major, cuda_deviceProp.minor);
-    
-    // Create CUDA streams for asynchronous operations
-    static const Int_t numStreams = 16;
+    struct cudaDeviceProp props;
+    cudaGetDeviceProperties(&props, dev);
+
+    char hostname[256];
+    gethostname(hostname, sizeof(hostname));
+
+    printf("Host %s using GPU %i: %s\n", hostname, dev, props.name);
+
+    cudaSafeCall( cudaGetDeviceProperties(&cuda_deviceProp, dev) );
+    if (cuda_deviceProp.major < 3) {
+        fprintf(stderr, "cuda_init(): This implementation of Lulesh requires device SM 3.0+.\n", dev);
+        exit(1);
+    }
+
+#if CUDART_VERSION < 5000
+   fprintf(stderr,"cuda_init(): This implementation of Lulesh uses texture objects, which is requires Cuda 5.0+.\n");
+   exit(1);
+#endif
+
 }
-
 void AllocateNodalPersistent(Domain* domain, size_t domNodes)
 {
   domain->x.resize(domNodes) ;  /* coordinates */
@@ -719,68 +730,7 @@ void InitMeshDecomp(Int_t numRanks, Int_t myRank,
 
    return;
 }
-static inline
-void TimeIncrement(Domain* domain)
-{
 
-    // To make sure dtcourant and dthydro have been updated on host
-    cudaEventSynchronize(domain->time_constraint_computed);
-
-    Real_t targetdt = domain->stoptime - domain->time_h;
-
-    if ((domain->dtfixed <= Real_t(0.0)) && (domain->cycle != Int_t(0))) {
-
-      Real_t ratio ;
-
-      /* This will require a reduction in parallel */
-      Real_t gnewdt = Real_t(1.0e+20) ;
-      Real_t newdt;
-      if ( *(domain->dtcourant_h) < gnewdt) { 
-         gnewdt = *(domain->dtcourant_h) / Real_t(2.0) ;
-      }
-      if ( *(domain->dthydro_h) < gnewdt) { 
-         gnewdt = *(domain->dthydro_h) * Real_t(2.0) / Real_t(3.0) ;
-      }
-
-#if USE_MPI      
-      MPI_Allreduce(&gnewdt, &newdt, 1,
-                    ((sizeof(Real_t) == 4) ? MPI_FLOAT : MPI_DOUBLE),
-                    MPI_MIN, MPI_COMM_WORLD) ;
-#else
-      newdt = gnewdt;
-#endif
-
-      Real_t olddt = domain->deltatime_h;
-      ratio = newdt / olddt ;
-      if (ratio >= Real_t(1.0)) {
-         if (ratio < domain->deltatimemultlb) {
-            newdt = olddt ;
-         }
-         else if (ratio > domain->deltatimemultub) {
-            newdt = olddt*domain->deltatimemultub ;
-         }
-      }
-
-      if (newdt > domain->dtmax) {
-         newdt = domain->dtmax ;
-      }
-      domain->deltatime_h = newdt ;
-   }
-
-   /* TRY TO PREVENT VERY SMALL SCALING ON THE NEXT CYCLE */
-   if ((targetdt > domain->deltatime_h) &&
-       (targetdt < (Real_t(4.0) * domain->deltatime_h / Real_t(3.0))) ) {
-      targetdt = Real_t(2.0) * domain->deltatime_h / Real_t(3.0) ;
-   }
-
-   if (targetdt < domain->deltatime_h) {
-      domain->deltatime_h = targetdt ;
-   }
-
-   domain->time_h += domain->deltatime_h ;
-
-   ++domain->cycle ;
-}
 
 Domain *NewDomain(char* argv[], Int_t numRanks, Index_t colLoc,
                Index_t rowLoc, Index_t planeLoc,

@@ -15,8 +15,8 @@ debug: 		FLAGS += $(DFLAGS)
 release: lulesh
 debug: lulesh
 
-lulesh: allocator.o lulesh_main.o lulesh_compute.o elem_utils.o
-	$(NVCC) $(LINKFLAGS) allocator.o lulesh_main.o lulesh_compute.o elem_utils.o -o lulesh
+lulesh: allocator.o lulesh_main.o lulesh_compute.o 
+	$(NVCC) $(LINKFLAGS) allocator.o lulesh_main.o lulesh_compute.o -o lulesh
 
 allocator.o: ../src/allocator.cu ../src/vector.h
 	$(NVCC) $(FLAGS) ../src/allocator.cu -I../src/ -c -o allocator.o
@@ -27,8 +27,6 @@ lulesh_compute.o: ../src/lulesh_compute.cu ../src/lulesh_split.h ../src/util.h .
 lulesh_main.o: ../src/lulesh_main.cu ../src/lulesh_split.h ../src/util.h ../src/vector.h ../src/allocator.h
 	$(NVCC) $(FLAGS) ../src/lulesh_main.cu -I../src/ -DUSE_CUDA -DNO_MPI -c -o lulesh_main.o
 
-elem_utils.o: ../src/elem_utils.cu ../src/lulesh_split.h
-	$(NVCC) $(FLAGS) ../src/elem_utils.cu -I../src/ -DUSE_CUDA -DNO_MPI -c -o elem_utils.o
 
 clean: 
-	rm -rf allocator.o lulesh_main.o lulesh_compute.o elem_utils.o lulesh xyz.asc regNumList.txt
+	rm -rf allocator.o lulesh_main.o lulesh_compute.o  lulesh xyz.asc regNumList.txt
