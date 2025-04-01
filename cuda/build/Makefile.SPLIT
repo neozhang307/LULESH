@@ -15,8 +15,8 @@ debug: 		FLAGS += $(DFLAGS)
 release: lulesh
 debug: lulesh
 
-lulesh: allocator.o lulesh_main.o lulesh_compute.o lulesh_compute_comm.o
-	$(NVCC) $(LINKFLAGS) allocator.o lulesh_main.o lulesh_compute.o lulesh_compute_comm.o -o lulesh
+lulesh: allocator.o lulesh_main.o lulesh_compute.o lulesh_compute_comm.o lulesh_comms.o lulesh_comms_gpu.o
+	$(NVCC) $(LINKFLAGS) allocator.o lulesh_main.o lulesh_compute.o lulesh_compute_comm.o lulesh_comms.o lulesh_comms_gpu.o -o lulesh
 
 allocator.o: ../src/allocator.cu ../src/vector.h
 	$(NVCC) $(FLAGS) ../src/allocator.cu -I../src/ -c -o allocator.o
@@ -30,6 +30,11 @@ lulesh_compute_comm.o: ../src/split/lulesh_compute_comm.cu ../src/split/lulesh_s
 lulesh_main.o: ../src/split/lulesh_main.cu ../src/split/lulesh_split.h ../src/util.h ../src/vector.h ../src/allocator.h
 	$(NVCC) $(FLAGS) ../src/split/lulesh_main.cu -I../src/ -I../src/split/ -DUSE_CUDA -DNO_MPI -c -o lulesh_main.o
 
+lulesh_comms.o: ../src/communication/lulesh-comms.cu ../src/split/lulesh_split.h
+	$(NVCC) $(FLAGS) ../src/communication/lulesh-comms.cu -I../src/ -I../src/split/ -I../src/communication/ -DUSE_CUDA -DNO_MPI -c -o lulesh_comms.o
+
+lulesh_comms_gpu.o: ../src/communication/lulesh-comms-gpu.cu ../src/split/lulesh_split.h
+	$(NVCC) $(FLAGS) ../src/communication/lulesh-comms-gpu.cu -I../src/ -I../src/split/ -I../src/communication/ -DUSE_CUDA -DNO_MPI -c -o lulesh_comms_gpu.o
 
 clean: 
-	rm -rf allocator.o lulesh_main.o lulesh_compute.o lulesh_compute_comm.o lulesh xyz.asc regNumList.txt
+	rm -rf allocator.o lulesh_main.o lulesh_compute.o lulesh_compute_comm.o lulesh_comms.o lulesh_comms_gpu.o lulesh xyz.asc regNumList.txt

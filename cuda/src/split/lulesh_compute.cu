@@ -467,31 +467,3 @@ void CalcTimeConstraintsForElems(Domain* domain)
     Allocator<Vector_d<Real_t> >::free(dev_mindthydro, dimGrid);
 }
 
-// Lagrangian leap-frog time integration
-void LagrangeLeapFrog(Domain* domain)
-{
-   /* calculate nodal forces, accelerations, velocities, positions, with
-    * applied boundary conditions and slide surface considerations */
-   // Phase 1: Update node-centered quantities
-   // - Calculates forces at nodes from element contributions
-   // - Computes accelerations based on forces and nodal masses
-   // - Applies boundary conditions (symmetry, free surfaces)
-   // - Updates positions and velocities using time integration
-   LagrangeNodal(domain);
-
-   /* calculate element quantities (i.e. velocity gradient & q), and update
-    * material states */
-   // Phase 2: Update element-centered quantities
-   // - Computes velocity gradients for elements
-   // - Calculates artificial viscosity (q) for shock treatment
-   // - Updates element volumes and material states
-   // - Applies equation of state to compute new pressures and energies
-   LagrangeElements(domain);
-
-   // Phase 3: Calculate new timestep based on Courant-Friedrichs-Lewy (CFL) condition
-   // - Computes maximum stable timestep to ensure simulation stability
-   // - Uses both velocity (Courant) and volume change (hydro) constraints
-   // - Selects the most restrictive timestep across all elements
-   CalcTimeConstraintsForElems(domain);
-}
-
