@@ -57,22 +57,6 @@
 
 /******************************************/
 
-/**
- * @brief CUDA kernel for packing and sending plane boundary data
- * @tparam type Specifies which face boundary to send (0-5):
- *              0: Bottom plane (Z-)
- *              1: Top plane (Z+)
- *              2: Front plane (Y-)
- *              3: Back plane (Y+)
- *              4: Left plane (X-)
- *              5: Right plane (X+)
- * @param destAddr Destination buffer in device memory
- * @param srcAddr Source data in device memory
- * @param sendCount Number of elements to send
- * @param dx X-dimension of the domain
- * @param dy Y-dimension of the domain
- * @param dz Z-dimension of the domain
- */
 template<int type>
 __global__ void SendPlane(Real_t *destAddr, Real_t *srcAddr, Index_t sendCount, Index_t dx, Index_t dy, Index_t dz)
 {
@@ -113,22 +97,6 @@ __global__ void SendPlane(Real_t *destAddr, Real_t *srcAddr, Index_t sendCount, 
   }
 }
 
-/**
- * @brief CUDA kernel for adding received plane boundary data to local domain values
- * @tparam type Specifies which face boundary to receive and add (0-5):
- *              0: Bottom plane (Z-)
- *              1: Top plane (Z+)
- *              2: Front plane (Y-)
- *              3: Back plane (Y+)
- *              4: Left plane (X-)
- *              5: Right plane (X+)
- * @param srcAddr Source buffer containing received data in device memory
- * @param destAddr Destination domain data in device memory 
- * @param recvCount Number of elements received
- * @param dx X-dimension of the domain
- * @param dy Y-dimension of the domain
- * @param dz Z-dimension of the domain
- */
 template<int type>
 __global__ void AddPlane(Real_t *srcAddr, Real_t *destAddr, Index_t recvCount, Index_t dx, Index_t dy, Index_t dz)
 {
@@ -169,22 +137,6 @@ __global__ void AddPlane(Real_t *srcAddr, Real_t *destAddr, Index_t recvCount, I
   }
 }
 
-/**
- * @brief CUDA kernel for copying received plane boundary data to local domain values
- * @tparam type Specifies which face boundary to receive and copy (0-5):
- *              0: Bottom plane (Z-)
- *              1: Top plane (Z+)
- *              2: Front plane (Y-)
- *              3: Back plane (Y+)
- *              4: Left plane (X-)
- *              5: Right plane (X+)
- * @param srcAddr Source buffer containing received data in device memory
- * @param destAddr Destination domain data in device memory 
- * @param recvCount Number of elements received
- * @param dx X-dimension of the domain
- * @param dy Y-dimension of the domain
- * @param dz Z-dimension of the domain
- */
 template<int type>
 __global__ void CopyPlane(Real_t *srcAddr, Real_t *destAddr, Index_t recvCount, Index_t dx, Index_t dy, Index_t dz)
 {
@@ -225,28 +177,6 @@ __global__ void CopyPlane(Real_t *srcAddr, Real_t *destAddr, Index_t recvCount, 
   }
 }
 
-/**
- * @brief CUDA kernel for packing and sending edge boundary data
- * @tparam type Specifies which edge to send (0-11):
- *              0: Bottom-left edge (Y-, X-)
- *              1: Bottom-front edge (Z-, Y-)
- *              2: Left-front edge (X-, Z-)
- *              3: Top-right edge (Y+, X+)
- *              4: Top-back edge (Z+, Y+)
- *              5: Right-back edge (X+, Z+)
- *              6: Top-left edge (Y+, X-)
- *              7: Bottom-back edge (Z+, Y-)
- *              8: Left-back edge (X-, Z+)
- *              9: Bottom-right edge (Y-, X+)
- *              10: Top-front edge (Y+, Z-)
- *              11: Right-front edge (X+, Z-)
- * @param destAddr Destination buffer in device memory
- * @param srcAddr Source data in device memory
- * @param sendCount Number of elements to send
- * @param dx X-dimension of the domain
- * @param dy Y-dimension of the domain
- * @param dz Z-dimension of the domain
- */
 template<int type>
 __global__ void SendEdge(Real_t *destAddr, Real_t *srcAddr, Index_t sendCount, Index_t dx, Index_t dy, Index_t dz)
 {
@@ -385,21 +315,11 @@ __global__ void CopyEdge(Real_t *srcAddr, Real_t *destAddr, Index_t recvCount, I
   }
 }
 
-/**
- * @brief CUDA kernel for adding received corner data to local domain values
- * @param destAddr Pointer to corner location in domain data (device memory)
- * @param src Value to add at the corner
- */
 __global__ void AddCorner(Real_t *destAddr, Real_t src)
 {
   destAddr[0] += src;
 }
 
-/**
- * @brief CUDA kernel for copying received corner data to local domain values
- * @param destAddr Pointer to corner location in domain data (device memory)
- * @param src Value to set at the corner
- */
 __global__ void CopyCorner(Real_t *destAddr, Real_t src)
 {
   destAddr[0] = src;
@@ -407,19 +327,6 @@ __global__ void CopyCorner(Real_t *destAddr, Real_t src)
 
 /******************************************/
 
-/**
- * @brief GPU version of CommSend function that uses CUDA streams for asynchronous operation
- * @param domain The simulation domain
- * @param msgType Type of message being sent (determines which boundary data)
- * @param xferFields Number of fields to transfer
- * @param fieldData Pointers to domain data fields being transferred
- * @param dx X-dimension of the domain
- * @param dy Y-dimension of the domain
- * @param dz Z-dimension of the domain
- * @param doSend Flag to control whether sending is performed
- * @param planeOnly Flag to control whether only plane data is exchanged (vs. edges and corners)
- * @param stream CUDA stream to use for asynchronous operations
- */
 void CommSendGpu(Domain& domain, int msgType,
               Index_t xferFields, Domain_member *fieldData,
               Index_t dx, Index_t dy, Index_t dz, bool doSend, bool planeOnly, cudaStream_t stream)
@@ -957,15 +864,6 @@ void CommSendGpu(Domain& domain, int msgType,
 
 /******************************************/
 
-/**
- * @brief GPU version of CommSBN function that uses CUDA streams for parallel execution
- * @details This function exchanges data at domain boundaries and combines values
- *          by adding contributions from neighboring domains using GPU kernels
- * @param domain The simulation domain
- * @param xferFields Number of fields to transfer
- * @param fieldData Pointers to domain data fields being transferred
- * @param streams Array of CUDA streams for parallel execution
- */
 void CommSBNGpu(Domain& domain, int xferFields, Domain_member *fieldData, cudaStream_t *streams) {
 
    if (domain.numRanks() == 1)

@@ -1,48 +1,8 @@
-#ifndef LULESH_H
-#define LULESH_H
-
-#include "utility/vector.h"
-#include <cuda.h>
-#include <cuda_runtime.h>
+#include "vector.h"
 
 #define LULESH_SHOW_PROGRESS 0
 #define DOUBLE_PRECISION
 //#define SAMI 
-
-#define MAX(a, b) (((a) > (b)) ? (a) : (b))
-#define POW(a, b) (pow((a), (b)))
-
-/* Stuff needed for boundary conditions */
-/* 2 BCs on each of 6 hexahedral faces (12 bits) */
-#define XI_M        0x00007
-#define XI_M_SYMM   0x00001
-#define XI_M_FREE   0x00002
-#define XI_M_COMM   0x00004
-
-#define XI_P        0x00038
-#define XI_P_SYMM   0x00008
-#define XI_P_FREE   0x00010
-#define XI_P_COMM   0x00020
-
-#define ETA_M       0x001c0
-#define ETA_M_SYMM  0x00040
-#define ETA_M_FREE  0x00080
-#define ETA_M_COMM  0x00100
-
-#define ETA_P       0x00e00
-#define ETA_P_SYMM  0x00200
-#define ETA_P_FREE  0x00400
-#define ETA_P_COMM  0x00800
-
-#define ZETA_M      0x07000
-#define ZETA_M_SYMM 0x01000
-#define ZETA_M_FREE 0x02000
-#define ZETA_M_COMM 0x04000
-
-#define ZETA_P      0x38000
-#define ZETA_P_SYMM 0x08000
-#define ZETA_P_FREE 0x10000
-#define ZETA_P_COMM 0x20000
 
 #if USE_MPI
 #include <mpi.h>
@@ -58,9 +18,6 @@
 // TODO: currently we support only early sync!
 #define SEDOV_SYNC_POS_VEL_EARLY 1
 #endif
-
-
-
 
 enum {
   VolumeError = -1,
@@ -334,20 +291,6 @@ typedef Real_t& (Domain::* Domain_member )(Index_t) ;
 
 #define MAX_FIELDS_PER_MPI_COMM 6
 
-static inline void checkErrors(Domain* domain,int its,int myRank)
-{
-  if (*(domain->bad_vol_h) != -1)
-  {
-    printf("Rank %i: Volume Error in cell %d at iteration %d\n",myRank,*(domain->bad_vol_h),its);
-    exit(VolumeError);
-  }
-
-  if (*(domain->bad_q_h) != -1)
-  {
-    printf("Rank %i: Q Error in cell %d at iteration %d\n",myRank,*(domain->bad_q_h),its);
-    exit(QStopError);
-  }
-}
 // cpu-comms
 void CommRecv(Domain& domain, Int_t msgType, Index_t xferFields,
               Index_t dx, Index_t dy, Index_t dz,
@@ -368,48 +311,3 @@ void CommSendGpu(Domain& domain, Int_t msgType,
 void CommSBNGpu(Domain& domain, Int_t xferFields, Domain_member *fieldData, cudaStream_t *streams);
 void CommSyncPosVelGpu(Domain& domain, cudaStream_t *streams);
 void CommMonoQGpu(Domain& domain, cudaStream_t stream);
-
-// Device helper functions for computation
-__device__ inline real4 SQRT(real4 arg);
-__device__ inline real8 SQRT(real8 arg);
-__device__ inline real4 CBRT(real4 arg);
-__device__ inline real8 CBRT(real8 arg);
-__device__ __host__ inline real4 FABS(real4 arg) { return fabsf(arg); }
-__device__ __host__ inline real8 FABS(real8 arg) { return fabs(arg); }
-__device__ inline real4 FMAX(real4 arg1, real4 arg2);
-__device__ inline real8 FMAX(real8 arg1, real8 arg2);
-
-// Core computation functions
-__host__ __device__ Real_t CalcElemVolume(const Real_t x[8], const Real_t y[8], const Real_t z[8]);
-void CalcKinematicsForElems(Domain& domain, Real_t deltaTime, Index_t numElem);
-void CalcLagrangeElements(Domain& domain, Real_t* vnew);
-void CalcQForElems(Domain& domain);
-void ApplyMaterialPropertiesForElems(Domain& domain);
-void CalcTimeConstraintsForElems(Domain* domain);
-void CalcAccelerationForNodes(Domain* domain);
-void InitStressTermsForElems(Domain& domain, Real_t *sigxx, Real_t *sigyy, Real_t *sigzz);
-void IntegrateStressForElems(Domain& domain, Real_t *sigxx, Real_t *sigyy, Real_t *sigzz, Real_t *determ);
-void CalcHourglassControlForElems(Domain& domain, Real_t *hgcoef);
-void CalcVolumeForceForElems(Domain& domain);
-void CalcForceForNodes(Domain* domain);
-void CalcMonotonicQRegionForElems(Domain& domain, Int_t r, Int_t rep);
-
-// Main execution functions
-void TimeIncrement(Domain* domain);
-void LagrangeLeapFrog(Domain* domain);
-void LagrangeNodal(Domain* domain);
-void LagrangeElements(Domain* domain);
-
-void ApplyMaterialPropertiesAndUpdateVolume(Domain *domain);
-void CalcPositionAndVelocityForNodes(const Real_t u_cut, Domain* domain);
-void CalcVolumeForceForElems(const Real_t hgcoef,Domain *domain);
-// Initialization and setup functions
-Domain *NewDomain(char* argv[], Int_t numRanks, Index_t colLoc,
-               Index_t rowLoc, Index_t planeLoc,
-               Index_t nx, int tp, bool structured, Int_t nr, Int_t balance, Int_t cost);
-void InitMeshDecomp(Int_t numRanks, Int_t myRank, Int_t *col, Int_t *row, Int_t *plane, Int_t *side);
-void printUsage(char *argv[]);
-void cuda_init(Int_t device);
-void CalcKinematicsAndMonotonicQGradient(Domain *domain);
-
-#endif // LULESH_H

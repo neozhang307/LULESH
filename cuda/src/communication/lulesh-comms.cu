@@ -6,59 +6,76 @@
 #include <string.h>
 #endif
 
-#include "lulesh.h"
+#include "utility/lulesh.h"
 
 #if USE_MPI
 /* Comm Routines */
 
+/**
+ * @brief Flags that control unpacked communication strategies
+ * @details These flags determine whether unpacked communication is allowed for different
+ * domain boundaries (planes, rows, columns)
+ */
 #define ALLOW_UNPACKED_PLANE false
 #define ALLOW_UNPACKED_ROW   false
 #define ALLOW_UNPACKED_COL   false
 
-/*
-   There are coherence issues for packing and unpacking message
-   buffers.  Ideally, you would like a lot of threads to 
-   cooperate in the assembly/dissassembly of each message.
-   To do that, each thread should really be operating in a
-   different coherence zone.
-
-   Let's assume we have three fields, f1 through f3, defined on
-   a 61x61x61 cube.  If we want to send the block boundary
-   information for each field to each neighbor processor across
-   each cube face, then we have three cases for the
-   memory layout/coherence of data on each of the six cube
-   boundaries:
-
-      (a) Two of the faces will be in contiguous memory blocks
-      (b) Two of the faces will be comprised of pencils of
-          contiguous memory.
-      (c) Two of the faces will have large strides between
-          every value living on the face.
-
-   How do you pack and unpack this data in buffers to
-   simultaneous achieve the best memory efficiency and
-   the most thread independence?
-
-   Do do you pack field f1 through f3 tighly to reduce message
-   size?  Do you align each field on a cache coherence boundary
-   within the message so that threads can pack and unpack each
-   field independently?  For case (b), do you align each
-   boundary pencil of each field separately?  This increases
-   the message size, but could improve cache coherence so
-   each pencil could be processed independently by a separate
-   thread with no conflicts.
-
-   Also, memory access for case (c) would best be done without
-   going through the cache (the stride is so large it just causes
-   a lot of useless cache evictions).  Is it worth creating
-   a special case version of the packing algorithm that uses
-   non-coherent load/store opcodes?
-*/
+/**
+ * @brief Discussion on Communication Strategy and Memory Layout Considerations
+ *
+ * There are coherence issues for packing and unpacking message
+ * buffers.  Ideally, you would like a lot of threads to 
+ * cooperate in the assembly/dissassembly of each message.
+ * To do that, each thread should really be operating in a
+ * different coherence zone.
+ *
+ * Let's assume we have three fields, f1 through f3, defined on
+ * a 61x61x61 cube.  If we want to send the block boundary
+ * information for each field to each neighbor processor across
+ * each cube face, then we have three cases for the
+ * memory layout/coherence of data on each of the six cube
+ * boundaries:
+ *
+ *    (a) Two of the faces will be in contiguous memory blocks
+ *    (b) Two of the faces will be comprised of pencils of
+ *        contiguous memory.
+ *    (c) Two of the faces will have large strides between
+ *        every value living on the face.
+ *
+ * How do you pack and unpack this data in buffers to
+ * simultaneous achieve the best memory efficiency and
+ * the most thread independence?
+ *
+ * Do do you pack field f1 through f3 tighly to reduce message
+ * size?  Do you align each field on a cache coherence boundary
+ * within the message so that threads can pack and unpack each
+ * field independently?  For case (b), do you align each
+ * boundary pencil of each field separately?  This increases
+ * the message size, but could improve cache coherence so
+ * each pencil could be processed independently by a separate
+ * thread with no conflicts.
+ *
+ * Also, memory access for case (c) would best be done without
+ * going through the cache (the stride is so large it just causes
+ * a lot of useless cache evictions).  Is it worth creating
+ * a special case version of the packing algorithm that uses
+ * non-coherent load/store opcodes?
+ */
 
 /******************************************/
 
 
-/* doRecv flag only works with regular block structure */
+/**
+ * @brief Receive domain boundary data from neighboring domains
+ * @param domain The simulation domain
+ * @param msgType Type of message being received (determines which boundary data)
+ * @param xferFields Number of fields to transfer
+ * @param dx X-dimension of the domain
+ * @param dy Y-dimension of the domain
+ * @param dz Z-dimension of the domain
+ * @param doRecv Flag to control whether reception is performed (only works with regular block structure)
+ * @param planeOnly Flag to control whether only plane data is exchanged (vs. edges and corners)
+ */
 void CommRecv(Domain& domain, int msgType, Index_t xferFields,
               Index_t dx, Index_t dy, Index_t dz, bool doRecv, bool planeOnly) {
 
@@ -357,6 +374,18 @@ void CommRecv(Domain& domain, int msgType, Index_t xferFields,
 
 /******************************************/
 
+/**
+ * @brief Send domain boundary data to neighboring domains
+ * @param domain The simulation domain
+ * @param msgType Type of message being sent (determines which boundary data)
+ * @param xferFields Number of fields to transfer
+ * @param fieldData Pointers to domain data fields being transferred
+ * @param dx X-dimension of the domain
+ * @param dy Y-dimension of the domain
+ * @param dz Z-dimension of the domain
+ * @param doSend Flag to control whether sending is performed
+ * @param planeOnly Flag to control whether only plane data is exchanged (vs. edges and corners)
+ */
 void CommSend(Domain& domain, int msgType,
               Index_t xferFields, Domain_member *fieldData,
               Index_t dx, Index_t dy, Index_t dz, bool doSend, bool planeOnly)
@@ -848,6 +877,14 @@ void CommSend(Domain& domain, int msgType,
 
 /******************************************/
 
+/**
+ * @brief Perform a symmetric boundary nodal communication
+ * @details This function exchanges data at domain boundaries and combines values
+ *          by adding contributions from neighboring domains
+ * @param domain The simulation domain
+ * @param xferFields Number of fields to transfer
+ * @param fieldData Pointers to domain data fields being transferred
+ */
 void CommSBN(Domain& domain, int xferFields, Domain_member *fieldData) {
 
    if (domain.numRanks() == 1)
@@ -1261,6 +1298,12 @@ void CommSBN(Domain& domain, int xferFields, Domain_member *fieldData) {
 
 /******************************************/
 
+/**
+ * @brief Synchronize position and velocity data across domain boundaries
+ * @details This function exchanges position (x,y,z) and velocity (xd,yd,zd) data
+ *          across domain boundaries, replacing local values with those from neighbors
+ * @param domain The simulation domain
+ */
 void CommSyncPosVel(Domain& domain) {
 
    if (domain.numRanks() == 1)
@@ -1684,6 +1727,12 @@ void CommSyncPosVel(Domain& domain) {
 
 /******************************************/
 
+/**
+ * @brief Communicate data needed for monotonic q calculation across domain boundaries
+ * @details This function receives velocity gradient data (delv_xi, delv_eta, delv_zeta)
+ *          from neighboring domains and stores it in ghost regions
+ * @param domain The simulation domain
+ */
 void CommMonoQ(Domain& domain)
 {
    if (domain.numRanks() == 1)

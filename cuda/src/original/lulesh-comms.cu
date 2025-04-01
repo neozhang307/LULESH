@@ -57,372 +57,309 @@
 
 /******************************************/
 
-/**
- * @brief CUDA kernel for packing and sending plane boundary data
- * @tparam type Specifies which face boundary to send (0-5):
- *              0: Bottom plane (Z-)
- *              1: Top plane (Z+)
- *              2: Front plane (Y-)
- *              3: Back plane (Y+)
- *              4: Left plane (X-)
- *              5: Right plane (X+)
- * @param destAddr Destination buffer in device memory
- * @param srcAddr Source data in device memory
- * @param sendCount Number of elements to send
- * @param dx X-dimension of the domain
- * @param dy Y-dimension of the domain
- * @param dz Z-dimension of the domain
- */
-template<int type>
-__global__ void SendPlane(Real_t *destAddr, Real_t *srcAddr, Index_t sendCount, Index_t dx, Index_t dy, Index_t dz)
-{
-  int tid = threadIdx.x + blockIdx.x * blockDim.x;
-  if (tid >= sendCount) return;
 
-  int i, j;
+/* doRecv flag only works with regular block structure */
+void CommRecv(Domain& domain, int msgType, Index_t xferFields,
+              Index_t dx, Index_t dy, Index_t dz, bool doRecv, bool planeOnly) {
 
-  switch (type) {
-  case 0:
-    i = tid;
-    destAddr[i] = srcAddr[i] ;
-    break;
-  case 1:
-    i = tid;
-    destAddr[i] = srcAddr[dx*dy*(dz - 1) + i] ;
-    break;
-  case 2:
-    i = tid / dx;
-    j = tid % dx;
-    destAddr[i*dx+j] = srcAddr[i*dx*dy + j] ;
-    break;
-  case 3:
-    i = tid / dx;
-    j = tid % dx;
-    destAddr[i*dx+j] = srcAddr[dx*(dy - 1) + i*dx*dy + j] ;
-    break;
-  case 4:
-    i = tid / dy;
-    j = tid % dy;
-    destAddr[i*dy + j] = srcAddr[i*dx*dy + j*dx] ;
-    break;
-  case 5:
-    i = tid / dy;
-    j = tid % dy;
-    destAddr[i*dy + j] = srcAddr[dx - 1 + i*dx*dy + j*dx] ;
-    break;
-  }
-}
+   if (domain.numRanks() == 1)
+      return ;
 
-/**
- * @brief CUDA kernel for adding received plane boundary data to local domain values
- * @tparam type Specifies which face boundary to receive and add (0-5):
- *              0: Bottom plane (Z-)
- *              1: Top plane (Z+)
- *              2: Front plane (Y-)
- *              3: Back plane (Y+)
- *              4: Left plane (X-)
- *              5: Right plane (X+)
- * @param srcAddr Source buffer containing received data in device memory
- * @param destAddr Destination domain data in device memory 
- * @param recvCount Number of elements received
- * @param dx X-dimension of the domain
- * @param dy Y-dimension of the domain
- * @param dz Z-dimension of the domain
- */
-template<int type>
-__global__ void AddPlane(Real_t *srcAddr, Real_t *destAddr, Index_t recvCount, Index_t dx, Index_t dy, Index_t dz)
-{
-  int tid = threadIdx.x + blockIdx.x * blockDim.x;
-  if (tid >= recvCount) return;
+   /* post recieve buffers for all incoming messages */
+   int myRank ;
+   Index_t maxPlaneComm = xferFields * domain.maxPlaneSize ;
+   Index_t maxEdgeComm  = xferFields * domain.maxEdgeSize ;
+   Index_t pmsg = 0 ; /* plane comm msg */
+   Index_t emsg = 0 ; /* edge comm msg */
+   Index_t cmsg = 0 ; /* corner comm msg */
+   MPI_Datatype baseType = ((sizeof(Real_t) == 4) ? MPI_FLOAT : MPI_DOUBLE) ;
+   bool rowMin, rowMax, colMin, colMax, planeMin, planeMax ;
 
-  int i, j;
+   /* assume communication to 6 neighbors by default */
+   rowMin = rowMax = colMin = colMax = planeMin = planeMax = true ;
 
-  switch (type) {
-  case 0:
-    i = tid;
-    destAddr[i] += srcAddr[i] ;
-    break;
-  case 1:
-    i = tid;
-    destAddr[dx*dy*(dz - 1) + i] += srcAddr[i] ;
-    break;
-  case 2:
-    i = tid / dx;
-    j = tid % dx;
-    destAddr[i*dx*dy + j] += srcAddr[i*dx + j] ;
-    break;
-  case 3:
-    i = tid / dx;
-    j = tid % dx;
-    destAddr[dx*(dy - 1) + i*dx*dy + j] += srcAddr[i*dx + j] ;
-    break;
-  case 4:
-    i = tid / dy;
-    j = tid % dy;
-    destAddr[i*dx*dy + j*dx] += srcAddr[i*dy + j] ;
-    break;
-  case 5:
-    i = tid / dy;
-    j = tid % dy;
-    destAddr[dx - 1 + i*dx*dy + j*dx] += srcAddr[i*dy + j] ;
-    break;
-  }
-}
+   if (domain.rowLoc() == 0) {
+      rowMin = false ;
+   }
+   if (domain.rowLoc() == (domain.tp()-1)) {
+      rowMax = false ;
+   }
+   if (domain.colLoc() == 0) {
+      colMin = false ;
+   }
+   if (domain.colLoc() == (domain.tp()-1)) {
+      colMax = false ;
+   }
+   if (domain.planeLoc() == 0) {
+      planeMin = false ;
+   }
+   if (domain.planeLoc() == (domain.tp()-1)) {
+      planeMax = false ;
+   }
 
-/**
- * @brief CUDA kernel for copying received plane boundary data to local domain values
- * @tparam type Specifies which face boundary to receive and copy (0-5):
- *              0: Bottom plane (Z-)
- *              1: Top plane (Z+)
- *              2: Front plane (Y-)
- *              3: Back plane (Y+)
- *              4: Left plane (X-)
- *              5: Right plane (X+)
- * @param srcAddr Source buffer containing received data in device memory
- * @param destAddr Destination domain data in device memory 
- * @param recvCount Number of elements received
- * @param dx X-dimension of the domain
- * @param dy Y-dimension of the domain
- * @param dz Z-dimension of the domain
- */
-template<int type>
-__global__ void CopyPlane(Real_t *srcAddr, Real_t *destAddr, Index_t recvCount, Index_t dx, Index_t dy, Index_t dz)
-{
-  int tid = threadIdx.x + blockIdx.x * blockDim.x;
-  if (tid >= recvCount) return;
+   for (Index_t i=0; i<26; ++i) {
+      domain.recvRequest[i] = MPI_REQUEST_NULL ;
+   }
 
-  int i, j;
+   MPI_Comm_rank(MPI_COMM_WORLD, &myRank) ;
 
-  switch (type) {
-  case 0:
-    i = tid;
-    destAddr[i] = srcAddr[i] ;
-    break;
-  case 1:
-    i = tid;
-    destAddr[dx*dy*(dz - 1) + i] = srcAddr[i] ;
-    break;
-  case 2:
-    i = tid / dx;
-    j = tid % dx;
-    destAddr[i*dx*dy + j] = srcAddr[i*dx + j] ;
-    break;
-  case 3:
-    i = tid / dx;
-    j = tid % dx;
-    destAddr[dx*(dy - 1) + i*dx*dy + j] = srcAddr[i*dx + j] ;
-    break;
-  case 4:
-    i = tid / dy;
-    j = tid % dy;
-    destAddr[i*dx*dy + j*dx] = srcAddr[i*dy + j] ;
-    break;
-  case 5:
-    i = tid / dy;
-    j = tid % dy;
-    destAddr[dx - 1 + i*dx*dy + j*dx] = srcAddr[i*dy + j] ;
-    break;
-  }
-}
+   /* post receives */
 
-/**
- * @brief CUDA kernel for packing and sending edge boundary data
- * @tparam type Specifies which edge to send (0-11):
- *              0: Bottom-left edge (Y-, X-)
- *              1: Bottom-front edge (Z-, Y-)
- *              2: Left-front edge (X-, Z-)
- *              3: Top-right edge (Y+, X+)
- *              4: Top-back edge (Z+, Y+)
- *              5: Right-back edge (X+, Z+)
- *              6: Top-left edge (Y+, X-)
- *              7: Bottom-back edge (Z+, Y-)
- *              8: Left-back edge (X-, Z+)
- *              9: Bottom-right edge (Y-, X+)
- *              10: Top-front edge (Y+, Z-)
- *              11: Right-front edge (X+, Z-)
- * @param destAddr Destination buffer in device memory
- * @param srcAddr Source data in device memory
- * @param sendCount Number of elements to send
- * @param dx X-dimension of the domain
- * @param dy Y-dimension of the domain
- * @param dz Z-dimension of the domain
- */
-template<int type>
-__global__ void SendEdge(Real_t *destAddr, Real_t *srcAddr, Index_t sendCount, Index_t dx, Index_t dy, Index_t dz)
-{
-  int i = threadIdx.x + blockIdx.x * blockDim.x;
-  if (i >= sendCount) return;
+   /* receive data from neighboring domain faces */
+   if (planeMin && doRecv) {
+      /* contiguous memory */
+      int fromRank = myRank - domain.tp()*domain.tp() ;
+      int recvCount = dx * dy * xferFields ;
+      MPI_Irecv(&domain.commDataRecv[pmsg * maxPlaneComm],
+                recvCount, baseType, fromRank, msgType,
+                MPI_COMM_WORLD, &domain.recvRequest[pmsg]) ;
+      ++pmsg ;
+   }
+   if (planeMax) {
+      /* contiguous memory */
+      int fromRank = myRank + domain.tp()*domain.tp() ;
+      int recvCount = dx * dy * xferFields ;
+      MPI_Irecv(&domain.commDataRecv[pmsg * maxPlaneComm],
+                recvCount, baseType, fromRank, msgType,
+                MPI_COMM_WORLD, &domain.recvRequest[pmsg]) ;
+      ++pmsg ;
+   }
+   if (rowMin && doRecv) {
+      /* semi-contiguous memory */
+      int fromRank = myRank - domain.tp() ;
+      int recvCount = dx * dz * xferFields ;
+      MPI_Irecv(&domain.commDataRecv[pmsg * maxPlaneComm],
+                recvCount, baseType, fromRank, msgType,
+                MPI_COMM_WORLD, &domain.recvRequest[pmsg]) ;
+      ++pmsg ;
+   }
+   if (rowMax) {
+      /* semi-contiguous memory */
+      int fromRank = myRank + domain.tp() ;
+      int recvCount = dx * dz * xferFields ;
+      MPI_Irecv(&domain.commDataRecv[pmsg * maxPlaneComm],
+                recvCount, baseType, fromRank, msgType,
+                MPI_COMM_WORLD, &domain.recvRequest[pmsg]) ;
+      ++pmsg ;
+   }
+   if (colMin && doRecv) {
+      /* scattered memory */
+      int fromRank = myRank - 1 ;
+      int recvCount = dy * dz * xferFields ;
+      MPI_Irecv(&domain.commDataRecv[pmsg * maxPlaneComm],
+                recvCount, baseType, fromRank, msgType,
+                MPI_COMM_WORLD, &domain.recvRequest[pmsg]) ;
+      ++pmsg ;
+   }
+   if (colMax) {
+      /* scattered memory */
+      int fromRank = myRank + 1 ;
+      int recvCount = dy * dz * xferFields ;
+      MPI_Irecv(&domain.commDataRecv[pmsg * maxPlaneComm],
+                recvCount, baseType, fromRank, msgType,
+                MPI_COMM_WORLD, &domain.recvRequest[pmsg]) ;
+      ++pmsg ;
+   }
 
-  switch (type) {
-  case 0:
-    destAddr[i] = srcAddr[i*dx*dy] ;
-    break;
-  case 1:
-    destAddr[i] = srcAddr[i] ;
-    break;
-  case 2:
-    destAddr[i] = srcAddr[i*dx] ;
-    break;
-  case 3:
-    destAddr[i] = srcAddr[dx*dy - 1 + i*dx*dy] ;
-    break;
-  case 4:
-    destAddr[i] = srcAddr[dx*(dy-1) + dx*dy*(dz-1) + i] ;
-    break;
-  case 5:
-    destAddr[i] = srcAddr[dx*dy*(dz-1) + dx - 1 + i*dx] ;
-    break;
-  case 6:
-    destAddr[i] = srcAddr[dx*(dy-1) + i*dx*dy] ;
-    break;
-  case 7:
-    destAddr[i] = srcAddr[dx*dy*(dz-1) + i] ;
-    break;
-  case 8:
-    destAddr[i] = srcAddr[dx*dy*(dz-1) + i*dx] ;
-    break;
-  case 9:
-    destAddr[i] = srcAddr[dx - 1 + i*dx*dy] ;
-    break;
-  case 10:
-    destAddr[i] = srcAddr[dx*(dy - 1) + i] ;
-    break;
-  case 11:
-    destAddr[i] = srcAddr[dx - 1 + i*dx] ;
-    break;
-  }
-}
+   if (!planeOnly) {
+      /* receive data from domains connected only by an edge */
+      if (rowMin && colMin && doRecv) {
+         int fromRank = myRank - domain.tp() - 1 ;
+         MPI_Irecv(&domain.commDataRecv[pmsg * maxPlaneComm +
+                                         emsg * maxEdgeComm],
+                   dz * xferFields, baseType, fromRank, msgType,
+                   MPI_COMM_WORLD, &domain.recvRequest[pmsg+emsg]) ;
+         ++emsg ;
+      }
 
-template<int type>
-__global__ void AddEdge(Real_t *srcAddr, Real_t *destAddr, Index_t recvCount, Index_t dx, Index_t dy, Index_t dz)
-{
-  int i = threadIdx.x + blockIdx.x * blockDim.x;
-  if (i >= recvCount) return;
+      if (rowMin && planeMin && doRecv) {
+         int fromRank = myRank - domain.tp()*domain.tp() - domain.tp() ;
+         MPI_Irecv(&domain.commDataRecv[pmsg * maxPlaneComm +
+                                         emsg * maxEdgeComm],
+                   dx * xferFields, baseType, fromRank, msgType,
+                   MPI_COMM_WORLD, &domain.recvRequest[pmsg+emsg]) ;
+         ++emsg ;
+      }
 
-  switch (type) {
-  case 0:
-    destAddr[i*dx*dy] += srcAddr[i] ;
-    break;
-  case 1:
-    destAddr[i] += srcAddr[i] ;
-    break;
-  case 2:
-    destAddr[i*dx] += srcAddr[i] ;
-    break;
-  case 3:
-    destAddr[dx*dy - 1 + i*dx*dy] += srcAddr[i] ;
-    break;
-  case 4:
-    destAddr[dx*(dy-1) + dx*dy*(dz-1) + i] += srcAddr[i] ;
-    break;
-  case 5:
-    destAddr[dx*dy*(dz-1) + dx - 1 + i*dx] += srcAddr[i] ;
-    break;
-  case 6:
-    destAddr[dx*(dy-1) + i*dx*dy] += srcAddr[i] ;
-    break;
-  case 7:
-    destAddr[dx*dy*(dz-1) + i] += srcAddr[i] ;
-    break;
-  case 8:
-    destAddr[dx*dy*(dz-1) + i*dx] += srcAddr[i] ;
-    break;
-  case 9:
-    destAddr[dx - 1 + i*dx*dy] += srcAddr[i] ;
-    break;
-  case 10:
-    destAddr[dx*(dy - 1) + i] += srcAddr[i] ;
-    break;
-  case 11:
-    destAddr[dx - 1 + i*dx] += srcAddr[i] ;
-    break;
-  }
-}
+      if (colMin && planeMin && doRecv) {
+         int fromRank = myRank - domain.tp()*domain.tp() - 1 ;
+         MPI_Irecv(&domain.commDataRecv[pmsg * maxPlaneComm +
+                                         emsg * maxEdgeComm],
+                   dy * xferFields, baseType, fromRank, msgType,
+                   MPI_COMM_WORLD, &domain.recvRequest[pmsg+emsg]) ;
+         ++emsg ;
+      }
 
-template<int type>
-__global__ void CopyEdge(Real_t *srcAddr, Real_t *destAddr, Index_t recvCount, Index_t dx, Index_t dy, Index_t dz)
-{
-  int i = threadIdx.x + blockIdx.x * blockDim.x;
-  if (i >= recvCount) return;
+      if (rowMax && colMax) {
+         int fromRank = myRank + domain.tp() + 1 ;
+         MPI_Irecv(&domain.commDataRecv[pmsg * maxPlaneComm +
+                                         emsg * maxEdgeComm],
+                   dz * xferFields, baseType, fromRank, msgType,
+                   MPI_COMM_WORLD, &domain.recvRequest[pmsg+emsg]) ;
+         ++emsg ;
+      }
 
-  switch (type) {
-  case 0:
-    destAddr[i*dx*dy] = srcAddr[i] ;
-    break;
-  case 1:
-    destAddr[i] = srcAddr[i] ;
-    break;
-  case 2:
-    destAddr[i*dx] = srcAddr[i] ;
-    break;
-  case 3:
-    destAddr[dx*dy - 1 + i*dx*dy] = srcAddr[i] ;
-    break;
-  case 4:
-    destAddr[dx*(dy-1) + dx*dy*(dz-1) + i] = srcAddr[i] ;
-    break;
-  case 5:
-    destAddr[dx*dy*(dz-1) + dx - 1 + i*dx] = srcAddr[i] ;
-    break;
-  case 6:
-    destAddr[dx*(dy-1) + i*dx*dy] = srcAddr[i] ;
-    break;
-  case 7:
-    destAddr[dx*dy*(dz-1) + i] = srcAddr[i] ;
-    break;
-  case 8:
-    destAddr[dx*dy*(dz-1) + i*dx] = srcAddr[i] ;
-    break;
-  case 9:
-    destAddr[dx - 1 + i*dx*dy] = srcAddr[i] ;
-    break;
-  case 10:
-    destAddr[dx*(dy - 1) + i] = srcAddr[i] ;
-    break;
-  case 11:
-    destAddr[dx - 1 + i*dx] = srcAddr[i] ;
-    break;
-  }
-}
+      if (rowMax && planeMax) {
+         int fromRank = myRank + domain.tp()*domain.tp() + domain.tp() ;
+         MPI_Irecv(&domain.commDataRecv[pmsg * maxPlaneComm +
+                                         emsg * maxEdgeComm],
+                   dx * xferFields, baseType, fromRank, msgType,
+                   MPI_COMM_WORLD, &domain.recvRequest[pmsg+emsg]) ;
+         ++emsg ;
+      }
 
-/**
- * @brief CUDA kernel for adding received corner data to local domain values
- * @param destAddr Pointer to corner location in domain data (device memory)
- * @param src Value to add at the corner
- */
-__global__ void AddCorner(Real_t *destAddr, Real_t src)
-{
-  destAddr[0] += src;
-}
+      if (colMax && planeMax) {
+         int fromRank = myRank + domain.tp()*domain.tp() + 1 ;
+         MPI_Irecv(&domain.commDataRecv[pmsg * maxPlaneComm +
+                                         emsg * maxEdgeComm],
+                   dy * xferFields, baseType, fromRank, msgType,
+                   MPI_COMM_WORLD, &domain.recvRequest[pmsg+emsg]) ;
+         ++emsg ;
+      }
 
-/**
- * @brief CUDA kernel for copying received corner data to local domain values
- * @param destAddr Pointer to corner location in domain data (device memory)
- * @param src Value to set at the corner
- */
-__global__ void CopyCorner(Real_t *destAddr, Real_t src)
-{
-  destAddr[0] = src;
+      if (rowMax && colMin) {
+         int fromRank = myRank + domain.tp() - 1 ;
+         MPI_Irecv(&domain.commDataRecv[pmsg * maxPlaneComm +
+                                         emsg * maxEdgeComm],
+                   dz * xferFields, baseType, fromRank, msgType,
+                   MPI_COMM_WORLD, &domain.recvRequest[pmsg+emsg]) ;
+         ++emsg ;
+      }
+
+      if (rowMin && planeMax) {
+         int fromRank = myRank + domain.tp()*domain.tp() - domain.tp() ;
+         MPI_Irecv(&domain.commDataRecv[pmsg * maxPlaneComm +
+                                         emsg * maxEdgeComm],
+                   dx * xferFields, baseType, fromRank, msgType,
+                   MPI_COMM_WORLD, &domain.recvRequest[pmsg+emsg]) ;
+         ++emsg ;
+      }
+
+      if (colMin && planeMax) {
+         int fromRank = myRank + domain.tp()*domain.tp() - 1 ;
+         MPI_Irecv(&domain.commDataRecv[pmsg * maxPlaneComm +
+                                         emsg * maxEdgeComm],
+                   dy * xferFields, baseType, fromRank, msgType,
+                   MPI_COMM_WORLD, &domain.recvRequest[pmsg+emsg]) ;
+         ++emsg ;
+      }
+
+      if (rowMin && colMax && doRecv) {
+         int fromRank = myRank - domain.tp() + 1 ;
+         MPI_Irecv(&domain.commDataRecv[pmsg * maxPlaneComm +
+                                         emsg * maxEdgeComm],
+                   dz * xferFields, baseType, fromRank, msgType,
+                   MPI_COMM_WORLD, &domain.recvRequest[pmsg+emsg]) ;
+         ++emsg ;
+      }
+
+      if (rowMax && planeMin && doRecv) {
+         int fromRank = myRank - domain.tp()*domain.tp() + domain.tp() ;
+         MPI_Irecv(&domain.commDataRecv[pmsg * maxPlaneComm +
+                                         emsg * maxEdgeComm],
+                   dx * xferFields, baseType, fromRank, msgType,
+                   MPI_COMM_WORLD, &domain.recvRequest[pmsg+emsg]) ;
+         ++emsg ;
+      }
+
+      if (colMax && planeMin && doRecv) {
+         int fromRank = myRank - domain.tp()*domain.tp() + 1 ;
+         MPI_Irecv(&domain.commDataRecv[pmsg * maxPlaneComm +
+                                         emsg * maxEdgeComm],
+                   dy * xferFields, baseType, fromRank, msgType,
+                   MPI_COMM_WORLD, &domain.recvRequest[pmsg+emsg]) ;
+         ++emsg ;
+      }
+
+      /* receive data from domains connected only by a corner */
+      if (rowMin && colMin && planeMin && doRecv) {
+         /* corner at domain logical coord (0, 0, 0) */
+         int fromRank = myRank - domain.tp()*domain.tp() - domain.tp() - 1 ;
+         MPI_Irecv(&domain.commDataRecv[pmsg * maxPlaneComm +
+                                         emsg * maxEdgeComm +
+                                         cmsg * CACHE_COHERENCE_PAD_REAL],
+                   xferFields, baseType, fromRank, msgType,
+                   MPI_COMM_WORLD, &domain.recvRequest[pmsg+emsg+cmsg]) ;
+         ++cmsg ;
+      }
+      if (rowMin && colMin && planeMax) {
+         /* corner at domain logical coord (0, 0, 1) */
+         int fromRank = myRank + domain.tp()*domain.tp() - domain.tp() - 1 ;
+         MPI_Irecv(&domain.commDataRecv[pmsg * maxPlaneComm +
+                                         emsg * maxEdgeComm +
+                                         cmsg * CACHE_COHERENCE_PAD_REAL],
+                   xferFields, baseType, fromRank, msgType,
+                   MPI_COMM_WORLD, &domain.recvRequest[pmsg+emsg+cmsg]) ;
+         ++cmsg ;
+      }
+      if (rowMin && colMax && planeMin && doRecv) {
+         /* corner at domain logical coord (1, 0, 0) */
+         int fromRank = myRank - domain.tp()*domain.tp() - domain.tp() + 1 ;
+         MPI_Irecv(&domain.commDataRecv[pmsg * maxPlaneComm +
+                                         emsg * maxEdgeComm +
+                                         cmsg * CACHE_COHERENCE_PAD_REAL],
+                   xferFields, baseType, fromRank, msgType,
+                   MPI_COMM_WORLD, &domain.recvRequest[pmsg+emsg+cmsg]) ;
+         ++cmsg ;
+      }
+      if (rowMin && colMax && planeMax) {
+         /* corner at domain logical coord (1, 0, 1) */
+         int fromRank = myRank + domain.tp()*domain.tp() - domain.tp() + 1 ;
+         MPI_Irecv(&domain.commDataRecv[pmsg * maxPlaneComm +
+                                         emsg * maxEdgeComm +
+                                         cmsg * CACHE_COHERENCE_PAD_REAL],
+                   xferFields, baseType, fromRank, msgType,
+                   MPI_COMM_WORLD, &domain.recvRequest[pmsg+emsg+cmsg]) ;
+         ++cmsg ;
+      }
+      if (rowMax && colMin && planeMin && doRecv) {
+         /* corner at domain logical coord (0, 1, 0) */
+         int fromRank = myRank - domain.tp()*domain.tp() + domain.tp() - 1 ;
+         MPI_Irecv(&domain.commDataRecv[pmsg * maxPlaneComm +
+                                         emsg * maxEdgeComm +
+                                         cmsg * CACHE_COHERENCE_PAD_REAL],
+                   xferFields, baseType, fromRank, msgType,
+                   MPI_COMM_WORLD, &domain.recvRequest[pmsg+emsg+cmsg]) ;
+         ++cmsg ;
+      }
+      if (rowMax && colMin && planeMax) {
+         /* corner at domain logical coord (0, 1, 1) */
+         int fromRank = myRank + domain.tp()*domain.tp() + domain.tp() - 1 ;
+         MPI_Irecv(&domain.commDataRecv[pmsg * maxPlaneComm +
+                                         emsg * maxEdgeComm +
+                                         cmsg * CACHE_COHERENCE_PAD_REAL],
+                   xferFields, baseType, fromRank, msgType,
+                   MPI_COMM_WORLD, &domain.recvRequest[pmsg+emsg+cmsg]) ;
+         ++cmsg ;
+      }
+      if (rowMax && colMax && planeMin && doRecv) {
+         /* corner at domain logical coord (1, 1, 0) */
+         int fromRank = myRank - domain.tp()*domain.tp() + domain.tp() + 1 ;
+         MPI_Irecv(&domain.commDataRecv[pmsg * maxPlaneComm +
+                                         emsg * maxEdgeComm +
+                                         cmsg * CACHE_COHERENCE_PAD_REAL],
+                   xferFields, baseType, fromRank, msgType,
+                   MPI_COMM_WORLD, &domain.recvRequest[pmsg+emsg+cmsg]) ;
+         ++cmsg ;
+      }
+      if (rowMax && colMax && planeMax) {
+         /* corner at domain logical coord (1, 1, 1) */
+         int fromRank = myRank + domain.tp()*domain.tp() + domain.tp() + 1 ;
+         MPI_Irecv(&domain.commDataRecv[pmsg * maxPlaneComm +
+                                         emsg * maxEdgeComm +
+                                         cmsg * CACHE_COHERENCE_PAD_REAL],
+                   xferFields, baseType, fromRank, msgType,
+                   MPI_COMM_WORLD, &domain.recvRequest[pmsg+emsg+cmsg]) ;
+         ++cmsg ;
+      }
+   }
 }
 
 /******************************************/
 
-/**
- * @brief GPU version of CommSend function that uses CUDA streams for asynchronous operation
- * @param domain The simulation domain
- * @param msgType Type of message being sent (determines which boundary data)
- * @param xferFields Number of fields to transfer
- * @param fieldData Pointers to domain data fields being transferred
- * @param dx X-dimension of the domain
- * @param dy Y-dimension of the domain
- * @param dz Z-dimension of the domain
- * @param doSend Flag to control whether sending is performed
- * @param planeOnly Flag to control whether only plane data is exchanged (vs. edges and corners)
- * @param stream CUDA stream to use for asynchronous operations
- */
-void CommSendGpu(Domain& domain, int msgType,
+void CommSend(Domain& domain, int msgType,
               Index_t xferFields, Domain_member *fieldData,
-              Index_t dx, Index_t dy, Index_t dz, bool doSend, bool planeOnly, cudaStream_t stream)
+              Index_t dx, Index_t dy, Index_t dz, bool doSend, bool planeOnly)
 {
 
    if (domain.numRanks() == 1)
@@ -438,7 +375,6 @@ void CommSendGpu(Domain& domain, int msgType,
    MPI_Datatype baseType = ((sizeof(Real_t) == 4) ? MPI_FLOAT : MPI_DOUBLE) ;
    MPI_Status status[26] ;
    Real_t *destAddr ;
-   Real_t *d_destAddr ;
    bool rowMin, rowMax, colMin, colMax, planeMin, planeMax ;
    /* assume communication to 6 neighbors by default */
    rowMin = rowMax = colMin = colMax = planeMin = planeMax = true ;
@@ -467,9 +403,6 @@ void CommSendGpu(Domain& domain, int msgType,
 
    MPI_Comm_rank(MPI_COMM_WORLD, &myRank) ;
 
-   // setup launch grid
-   const int block = 128;
-
    /* post sends */
 
    if (planeMin | planeMax) {
@@ -477,16 +410,15 @@ void CommSendGpu(Domain& domain, int msgType,
       int sendCount = dx * dy ;
 
       if (planeMin) {
-	 destAddr = &domain.commDataSend[pmsg * maxPlaneComm] ;
-         d_destAddr = &domain.d_commDataSend[pmsg * maxPlaneComm] ;
+         destAddr = &domain.commDataSend[pmsg * maxPlaneComm] ;
          for (Index_t fi=0 ; fi<xferFields; ++fi) {
             Domain_member src = fieldData[fi] ;
-	    SendPlane<0><<<(sendCount+block-1)/block,block,0,stream>>>(d_destAddr, &(domain.*src)(0), sendCount, dx, dy, dz);
-            d_destAddr += sendCount ;
+            for (Index_t i=0; i<sendCount; ++i) {
+               destAddr[i] = (domain.*src)(i) ;
+            }
+            destAddr += sendCount ;
          }
-         d_destAddr -= xferFields*sendCount ;
-         cudaMemcpyAsync(destAddr, d_destAddr, xferFields*sendCount*sizeof(Real_t), cudaMemcpyDeviceToHost, stream);
-         cudaStreamSynchronize(stream);
+         destAddr -= xferFields*sendCount ;
 
          MPI_Isend(destAddr, xferFields*sendCount, baseType,
                    myRank - domain.tp()*domain.tp(), msgType,
@@ -495,15 +427,14 @@ void CommSendGpu(Domain& domain, int msgType,
       }
       if (planeMax && doSend) {
          destAddr = &domain.commDataSend[pmsg * maxPlaneComm] ;
-	 d_destAddr = &domain.d_commDataSend[pmsg * maxPlaneComm] ;
          for (Index_t fi=0 ; fi<xferFields; ++fi) {
             Domain_member src = fieldData[fi] ;
-	    SendPlane<1><<<(sendCount+block-1)/block,block,0,stream>>>(d_destAddr, &(domain.*src)(0), sendCount, dx, dy, dz);
-            d_destAddr += sendCount ;
+            for (Index_t i=0; i<sendCount; ++i) {
+               destAddr[i] = (domain.*src)(dx*dy*(dz - 1) + i) ;
+            }
+            destAddr += sendCount ;
          }
-         d_destAddr -= xferFields*sendCount ;
-         cudaMemcpyAsync(destAddr, d_destAddr, xferFields*sendCount*sizeof(Real_t), cudaMemcpyDeviceToHost, stream);
-         cudaStreamSynchronize(stream);
+         destAddr -= xferFields*sendCount ;
 
          MPI_Isend(destAddr, xferFields*sendCount, baseType,
                    myRank + domain.tp()*domain.tp(), msgType,
@@ -517,15 +448,16 @@ void CommSendGpu(Domain& domain, int msgType,
 
       if (rowMin) {
          destAddr = &domain.commDataSend[pmsg * maxPlaneComm] ;
-         d_destAddr = &domain.d_commDataSend[pmsg * maxPlaneComm] ;
          for (Index_t fi=0; fi<xferFields; ++fi) {
             Domain_member src = fieldData[fi] ;
-	    SendPlane<2><<<(sendCount+block-1)/block,block,0,stream>>>(d_destAddr, &(domain.*src)(0), sendCount, dx, dy, dz);
-            d_destAddr += sendCount ;
+            for (Index_t i=0; i<dz; ++i) {
+               for (Index_t j=0; j<dx; ++j) {
+                  destAddr[i*dx+j] = (domain.*src)(i*dx*dy + j) ;
+               }
+            }
+            destAddr += sendCount ;
          }
-         d_destAddr -= xferFields*sendCount ;
-         cudaMemcpyAsync(destAddr, d_destAddr, xferFields*sendCount*sizeof(Real_t), cudaMemcpyDeviceToHost, stream);
-         cudaStreamSynchronize(stream);
+         destAddr -= xferFields*sendCount ;
 
          MPI_Isend(destAddr, xferFields*sendCount, baseType,
                    myRank - domain.tp(), msgType,
@@ -534,15 +466,16 @@ void CommSendGpu(Domain& domain, int msgType,
       }
       if (rowMax && doSend) {
          destAddr = &domain.commDataSend[pmsg * maxPlaneComm] ;
-         d_destAddr = &domain.d_commDataSend[pmsg * maxPlaneComm] ;
          for (Index_t fi=0; fi<xferFields; ++fi) {
             Domain_member src = fieldData[fi] ;
-	    SendPlane<3><<<(sendCount+block-1)/block,block,0,stream>>>(d_destAddr, &(domain.*src)(0), sendCount, dx, dy, dz);
-            d_destAddr += sendCount ;
+            for (Index_t i=0; i<dz; ++i) {
+               for (Index_t j=0; j<dx; ++j) {
+                  destAddr[i*dx+j] = (domain.*src)(dx*(dy - 1) + i*dx*dy + j) ;
+               }
+            }
+            destAddr += sendCount ;
          }
-         d_destAddr -= xferFields*sendCount ;
-         cudaMemcpyAsync(destAddr, d_destAddr, xferFields*sendCount*sizeof(Real_t), cudaMemcpyDeviceToHost, stream);
-         cudaStreamSynchronize(stream);
+         destAddr -= xferFields*sendCount ;
 
          MPI_Isend(destAddr, xferFields*sendCount, baseType,
                    myRank + domain.tp(), msgType,
@@ -556,15 +489,16 @@ void CommSendGpu(Domain& domain, int msgType,
 
       if (colMin) {
          destAddr = &domain.commDataSend[pmsg * maxPlaneComm] ;
-         d_destAddr = &domain.d_commDataSend[pmsg * maxPlaneComm] ;
          for (Index_t fi=0; fi<xferFields; ++fi) {
             Domain_member src = fieldData[fi] ;
-	    SendPlane<4><<<(sendCount+block-1)/block,block,0,stream>>>(d_destAddr, &(domain.*src)(0), sendCount, dx, dy, dz);
-            d_destAddr += sendCount ;
+            for (Index_t i=0; i<dz; ++i) {
+               for (Index_t j=0; j<dy; ++j) {
+                  destAddr[i*dy + j] = (domain.*src)(i*dx*dy + j*dx) ;
+               }
+            }
+            destAddr += sendCount ;
          }
-         d_destAddr -= xferFields*sendCount ;
-         cudaMemcpyAsync(destAddr, d_destAddr, xferFields*sendCount*sizeof(Real_t), cudaMemcpyDeviceToHost, stream);
-         cudaStreamSynchronize(stream);
+         destAddr -= xferFields*sendCount ;
 
          MPI_Isend(destAddr, xferFields*sendCount, baseType,
                    myRank - 1, msgType,
@@ -573,15 +507,16 @@ void CommSendGpu(Domain& domain, int msgType,
       }
       if (colMax && doSend) {
          destAddr = &domain.commDataSend[pmsg * maxPlaneComm] ;
-         d_destAddr = &domain.d_commDataSend[pmsg * maxPlaneComm] ;
          for (Index_t fi=0; fi<xferFields; ++fi) {
             Domain_member src = fieldData[fi] ;
-	    SendPlane<5><<<(sendCount+block-1)/block,block,0,stream>>>(d_destAddr, &(domain.*src)(0), sendCount, dx, dy, dz);
-            d_destAddr += sendCount ;
+            for (Index_t i=0; i<dz; ++i) {
+               for (Index_t j=0; j<dy; ++j) {
+                  destAddr[i*dy + j] = (domain.*src)(dx - 1 + i*dx*dy + j*dx) ;
+               }
+            }
+            destAddr += sendCount ;
          }
-         d_destAddr -= xferFields*sendCount ;
-         cudaMemcpyAsync(destAddr, d_destAddr, xferFields*sendCount*sizeof(Real_t), cudaMemcpyDeviceToHost, stream);
-         cudaStreamSynchronize(stream);
+         destAddr -= xferFields*sendCount ;
 
          MPI_Isend(destAddr, xferFields*sendCount, baseType,
                    myRank + 1, msgType,
@@ -595,17 +530,14 @@ void CommSendGpu(Domain& domain, int msgType,
          int toRank = myRank - domain.tp() - 1 ;
          destAddr = &domain.commDataSend[pmsg * maxPlaneComm +
                                           emsg * maxEdgeComm] ;
-         d_destAddr = &domain.d_commDataSend[pmsg * maxPlaneComm +
-                                          emsg * maxEdgeComm] ;
          for (Index_t fi=0; fi<xferFields; ++fi) {
             Domain_member src = fieldData[fi] ;
-	    SendEdge<0><<<(dz+block-1)/block,block,0,stream>>>(d_destAddr, &(domain.*src)(0), dz, dx, dy, dz);
-            d_destAddr += dz ;
+            for (Index_t i=0; i<dz; ++i) {
+               destAddr[i] = (domain.*src)(i*dx*dy) ;
+            }
+            destAddr += dz ;
          }
-         d_destAddr -= xferFields*dz ;
-         cudaMemcpyAsync(destAddr, d_destAddr, xferFields*dz*sizeof(Real_t), cudaMemcpyDeviceToHost, stream);
-         cudaStreamSynchronize(stream);
-
+         destAddr -= xferFields*dz ;
          MPI_Isend(destAddr, xferFields*dz, baseType, toRank, msgType,
                    MPI_COMM_WORLD, &domain.sendRequest[pmsg+emsg]) ;
          ++emsg ;
@@ -615,17 +547,14 @@ void CommSendGpu(Domain& domain, int msgType,
          int toRank = myRank - domain.tp()*domain.tp() - domain.tp() ;
          destAddr = &domain.commDataSend[pmsg * maxPlaneComm +
                                           emsg * maxEdgeComm] ;
-         d_destAddr = &domain.d_commDataSend[pmsg * maxPlaneComm +
-                                          emsg * maxEdgeComm] ;
          for (Index_t fi=0; fi<xferFields; ++fi) {
             Domain_member src = fieldData[fi] ;
-	    SendEdge<1><<<(dx+block-1)/block,block,0,stream>>>(d_destAddr, &(domain.*src)(0), dx, dx, dy, dz);
-            d_destAddr += dx ;
+            for (Index_t i=0; i<dx; ++i) {
+               destAddr[i] = (domain.*src)(i) ;
+            }
+            destAddr += dx ;
          }
-         d_destAddr -= xferFields*dx ;
-         cudaMemcpyAsync(destAddr, d_destAddr, xferFields*dx*sizeof(Real_t), cudaMemcpyDeviceToHost, stream);
-         cudaStreamSynchronize(stream);
-
+         destAddr -= xferFields*dx ;
          MPI_Isend(destAddr, xferFields*dx, baseType, toRank, msgType,
                    MPI_COMM_WORLD, &domain.sendRequest[pmsg+emsg]) ;
          ++emsg ;
@@ -635,17 +564,14 @@ void CommSendGpu(Domain& domain, int msgType,
          int toRank = myRank - domain.tp()*domain.tp() - 1 ;
          destAddr = &domain.commDataSend[pmsg * maxPlaneComm +
                                           emsg * maxEdgeComm] ;
-         d_destAddr = &domain.d_commDataSend[pmsg * maxPlaneComm +
-                                          emsg * maxEdgeComm] ;
          for (Index_t fi=0; fi<xferFields; ++fi) {
             Domain_member src = fieldData[fi] ;
-	    SendEdge<2><<<(dy+block-1)/block,block,0,stream>>>(d_destAddr, &(domain.*src)(0), dy, dx, dy, dz);
-            d_destAddr += dy ;
+            for (Index_t i=0; i<dy; ++i) {
+               destAddr[i] = (domain.*src)(i*dx) ;
+            }
+            destAddr += dy ;
          }
-         d_destAddr -= xferFields*dy ;
-         cudaMemcpyAsync(destAddr, d_destAddr, xferFields*dy*sizeof(Real_t), cudaMemcpyDeviceToHost, stream);
-         cudaStreamSynchronize(stream);
-
+         destAddr -= xferFields*dy ;
          MPI_Isend(destAddr, xferFields*dy, baseType, toRank, msgType,
                    MPI_COMM_WORLD, &domain.sendRequest[pmsg+emsg]) ;
          ++emsg ;
@@ -655,17 +581,14 @@ void CommSendGpu(Domain& domain, int msgType,
          int toRank = myRank + domain.tp() + 1 ;
          destAddr = &domain.commDataSend[pmsg * maxPlaneComm +
                                           emsg * maxEdgeComm] ;
-         d_destAddr = &domain.d_commDataSend[pmsg * maxPlaneComm +
-                                          emsg * maxEdgeComm] ;
          for (Index_t fi=0; fi<xferFields; ++fi) {
             Domain_member src = fieldData[fi] ;
-	    SendEdge<3><<<(dz+block-1)/block,block,0,stream>>>(d_destAddr, &(domain.*src)(0), dz, dx, dy, dz);
-            d_destAddr += dz ;
+            for (Index_t i=0; i<dz; ++i) {
+               destAddr[i] = (domain.*src)(dx*dy - 1 + i*dx*dy) ;
+            }
+            destAddr += dz ;
          }
-         d_destAddr -= xferFields*dz ;
-         cudaMemcpyAsync(destAddr, d_destAddr, xferFields*dz*sizeof(Real_t), cudaMemcpyDeviceToHost, stream);
-         cudaStreamSynchronize(stream);
-
+         destAddr -= xferFields*dz ;
          MPI_Isend(destAddr, xferFields*dz, baseType, toRank, msgType,
                    MPI_COMM_WORLD, &domain.sendRequest[pmsg+emsg]) ;
          ++emsg ;
@@ -675,17 +598,14 @@ void CommSendGpu(Domain& domain, int msgType,
          int toRank = myRank + domain.tp()*domain.tp() + domain.tp() ;
          destAddr = &domain.commDataSend[pmsg * maxPlaneComm +
                                           emsg * maxEdgeComm] ;
-         d_destAddr = &domain.d_commDataSend[pmsg * maxPlaneComm +
-                                          emsg * maxEdgeComm] ;
          for (Index_t fi=0; fi<xferFields; ++fi) {
             Domain_member src = fieldData[fi] ;
-	    SendEdge<4><<<(dx+block-1)/block,block,0,stream>>>(d_destAddr, &(domain.*src)(0), dx, dx, dy, dz);
-            d_destAddr += dx ;
+            for (Index_t i=0; i<dx; ++i) {
+              destAddr[i] = (domain.*src)(dx*(dy-1) + dx*dy*(dz-1) + i) ;
+            }
+            destAddr += dx ;
          }
-         d_destAddr -= xferFields*dx ;
-         cudaMemcpyAsync(destAddr, d_destAddr, xferFields*dx*sizeof(Real_t), cudaMemcpyDeviceToHost, stream);
-         cudaStreamSynchronize(stream);
-
+         destAddr -= xferFields*dx ;
          MPI_Isend(destAddr, xferFields*dx, baseType, toRank, msgType,
                    MPI_COMM_WORLD, &domain.sendRequest[pmsg+emsg]) ;
          ++emsg ;
@@ -695,17 +615,14 @@ void CommSendGpu(Domain& domain, int msgType,
          int toRank = myRank + domain.tp()*domain.tp() + 1 ;
          destAddr = &domain.commDataSend[pmsg * maxPlaneComm +
                                           emsg * maxEdgeComm] ;
-         d_destAddr = &domain.d_commDataSend[pmsg * maxPlaneComm +
-                                          emsg * maxEdgeComm] ;
          for (Index_t fi=0; fi<xferFields; ++fi) {
             Domain_member src = fieldData[fi] ;
-	    SendEdge<5><<<(dy+block-1)/block,block,0,stream>>>(d_destAddr, &(domain.*src)(0), dy, dx, dy, dz);
-            d_destAddr += dy ;
+            for (Index_t i=0; i<dy; ++i) {
+               destAddr[i] = (domain.*src)(dx*dy*(dz-1) + dx - 1 + i*dx) ;
+            }
+            destAddr += dy ;
          }
-         d_destAddr -= xferFields*dy ;
-         cudaMemcpyAsync(destAddr, d_destAddr, xferFields*dy*sizeof(Real_t), cudaMemcpyDeviceToHost, stream);
-         cudaStreamSynchronize(stream);
-
+         destAddr -= xferFields*dy ;
          MPI_Isend(destAddr, xferFields*dy, baseType, toRank, msgType,
                    MPI_COMM_WORLD, &domain.sendRequest[pmsg+emsg]) ;
          ++emsg ;
@@ -715,17 +632,14 @@ void CommSendGpu(Domain& domain, int msgType,
          int toRank = myRank + domain.tp() - 1 ;
          destAddr = &domain.commDataSend[pmsg * maxPlaneComm +
                                           emsg * maxEdgeComm] ;
-         d_destAddr = &domain.d_commDataSend[pmsg * maxPlaneComm +
-                                          emsg * maxEdgeComm] ;
          for (Index_t fi=0; fi<xferFields; ++fi) {
             Domain_member src = fieldData[fi] ;
-	    SendEdge<6><<<(dz+block-1)/block,block,0,stream>>>(d_destAddr, &(domain.*src)(0), dz, dx, dy, dz);
-            d_destAddr += dz ;
+            for (Index_t i=0; i<dz; ++i) {
+               destAddr[i] = (domain.*src)(dx*(dy-1) + i*dx*dy) ;
+            }
+            destAddr += dz ;
          }
-         d_destAddr -= xferFields*dz ;
-         cudaMemcpyAsync(destAddr, d_destAddr, xferFields*dz*sizeof(Real_t), cudaMemcpyDeviceToHost, stream);
-         cudaStreamSynchronize(stream);
-
+         destAddr -= xferFields*dz ;
          MPI_Isend(destAddr, xferFields*dz, baseType, toRank, msgType,
                    MPI_COMM_WORLD, &domain.sendRequest[pmsg+emsg]) ;
          ++emsg ;
@@ -735,17 +649,14 @@ void CommSendGpu(Domain& domain, int msgType,
          int toRank = myRank + domain.tp()*domain.tp() - domain.tp() ;
          destAddr = &domain.commDataSend[pmsg * maxPlaneComm +
                                           emsg * maxEdgeComm] ;
-         d_destAddr = &domain.d_commDataSend[pmsg * maxPlaneComm +
-                                          emsg * maxEdgeComm] ;
          for (Index_t fi=0; fi<xferFields; ++fi) {
             Domain_member src = fieldData[fi] ;
-	    SendEdge<7><<<(dx+block-1)/block,block,0,stream>>>(d_destAddr, &(domain.*src)(0), dx, dx, dy, dz);
-            d_destAddr += dx ;
+            for (Index_t i=0; i<dx; ++i) {
+               destAddr[i] = (domain.*src)(dx*dy*(dz-1) + i) ;
+            }
+            destAddr += dx ;
          }
-         d_destAddr -= xferFields*dx ;
-         cudaMemcpyAsync(destAddr, d_destAddr, xferFields*dx*sizeof(Real_t), cudaMemcpyDeviceToHost, stream);
-         cudaStreamSynchronize(stream);
-
+         destAddr -= xferFields*dx ;
          MPI_Isend(destAddr, xferFields*dx, baseType, toRank, msgType,
                    MPI_COMM_WORLD, &domain.sendRequest[pmsg+emsg]) ;
          ++emsg ;
@@ -755,17 +666,14 @@ void CommSendGpu(Domain& domain, int msgType,
          int toRank = myRank + domain.tp()*domain.tp() - 1 ;
          destAddr = &domain.commDataSend[pmsg * maxPlaneComm +
                                           emsg * maxEdgeComm] ;
-         d_destAddr = &domain.d_commDataSend[pmsg * maxPlaneComm +
-                                          emsg * maxEdgeComm] ;
          for (Index_t fi=0; fi<xferFields; ++fi) {
             Domain_member src = fieldData[fi] ;
-	    SendEdge<8><<<(dy+block-1)/block,block,0,stream>>>(d_destAddr, &(domain.*src)(0), dy, dx, dy, dz);
-            d_destAddr += dy ;
+            for (Index_t i=0; i<dy; ++i) {
+               destAddr[i] = (domain.*src)(dx*dy*(dz-1) + i*dx) ;
+            }
+            destAddr += dy ;
          }
-         d_destAddr -= xferFields*dy ;
-         cudaMemcpyAsync(destAddr, d_destAddr, xferFields*dy*sizeof(Real_t), cudaMemcpyDeviceToHost, stream);
-         cudaStreamSynchronize(stream);
-
+         destAddr -= xferFields*dy ;
          MPI_Isend(destAddr, xferFields*dy, baseType, toRank, msgType,
                    MPI_COMM_WORLD, &domain.sendRequest[pmsg+emsg]) ;
          ++emsg ;
@@ -775,17 +683,14 @@ void CommSendGpu(Domain& domain, int msgType,
          int toRank = myRank - domain.tp() + 1 ;
          destAddr = &domain.commDataSend[pmsg * maxPlaneComm +
                                           emsg * maxEdgeComm] ;
-         d_destAddr = &domain.d_commDataSend[pmsg * maxPlaneComm +
-                                          emsg * maxEdgeComm] ;
          for (Index_t fi=0; fi<xferFields; ++fi) {
             Domain_member src = fieldData[fi] ;
-	    SendEdge<9><<<(dz+block-1)/block,block,0,stream>>>(d_destAddr, &(domain.*src)(0), dz, dx, dy, dz);
-            d_destAddr += dz ;
+            for (Index_t i=0; i<dz; ++i) {
+               destAddr[i] = (domain.*src)(dx - 1 + i*dx*dy) ;
+            }
+            destAddr += dz ;
          }
-         d_destAddr -= xferFields*dz ;
-         cudaMemcpyAsync(destAddr, d_destAddr, xferFields*dz*sizeof(Real_t), cudaMemcpyDeviceToHost, stream);
-         cudaStreamSynchronize(stream);
-
+         destAddr -= xferFields*dz ;
          MPI_Isend(destAddr, xferFields*dz, baseType, toRank, msgType,
                    MPI_COMM_WORLD, &domain.sendRequest[pmsg+emsg]) ;
          ++emsg ;
@@ -795,17 +700,14 @@ void CommSendGpu(Domain& domain, int msgType,
          int toRank = myRank - domain.tp()*domain.tp() + domain.tp() ;
          destAddr = &domain.commDataSend[pmsg * maxPlaneComm +
                                           emsg * maxEdgeComm] ;
-         d_destAddr = &domain.d_commDataSend[pmsg * maxPlaneComm +
-                                          emsg * maxEdgeComm] ;
          for (Index_t fi=0; fi<xferFields; ++fi) {
             Domain_member src = fieldData[fi] ;
-	    SendEdge<10><<<(dx+block-1)/block,block,0,stream>>>(d_destAddr, &(domain.*src)(0), dx, dx, dy, dz);
-            d_destAddr += dx ;
+            for (Index_t i=0; i<dx; ++i) {
+               destAddr[i] = (domain.*src)(dx*(dy - 1) + i) ;
+            }
+            destAddr += dx ;
          }
-         d_destAddr -= xferFields*dx ;
-         cudaMemcpyAsync(destAddr, d_destAddr, xferFields*dx*sizeof(Real_t), cudaMemcpyDeviceToHost, stream);
-         cudaStreamSynchronize(stream);
-
+         destAddr -= xferFields*dx ;
          MPI_Isend(destAddr, xferFields*dx, baseType, toRank, msgType,
                    MPI_COMM_WORLD, &domain.sendRequest[pmsg+emsg]) ;
          ++emsg ;
@@ -815,17 +717,14 @@ void CommSendGpu(Domain& domain, int msgType,
          int toRank = myRank - domain.tp()*domain.tp() + 1 ;
          destAddr = &domain.commDataSend[pmsg * maxPlaneComm +
                                           emsg * maxEdgeComm] ;
-         d_destAddr = &domain.d_commDataSend[pmsg * maxPlaneComm +
-                                          emsg * maxEdgeComm] ;
          for (Index_t fi=0; fi<xferFields; ++fi) {
             Domain_member src = fieldData[fi] ;
-	    SendEdge<11><<<(dy+block-1)/block,block,0,stream>>>(d_destAddr, &(domain.*src)(0), dy, dx, dy, dz);
-            d_destAddr += dy ;
+            for (Index_t i=0; i<dy; ++i) {
+               destAddr[i] = (domain.*src)(dx - 1 + i*dx) ;
+            }
+            destAddr += dy ;
          }
-         d_destAddr -= xferFields*dy ;
-         cudaMemcpyAsync(destAddr, d_destAddr, xferFields*dy*sizeof(Real_t), cudaMemcpyDeviceToHost, stream);
-         cudaStreamSynchronize(stream);
-
+         destAddr -= xferFields*dy ;
          MPI_Isend(destAddr, xferFields*dy, baseType, toRank, msgType,
                    MPI_COMM_WORLD, &domain.sendRequest[pmsg+emsg]) ;
          ++emsg ;
@@ -838,9 +737,8 @@ void CommSendGpu(Domain& domain, int msgType,
                                                 emsg * maxEdgeComm +
                                       cmsg * CACHE_COHERENCE_PAD_REAL] ;
          for (Index_t fi=0; fi<xferFields; ++fi) {
-            cudaMemcpyAsync(&comBuf[fi], &(domain.*fieldData[fi])(0), sizeof(Real_t), cudaMemcpyDeviceToHost, stream);
+            comBuf[fi] = (domain.*fieldData[fi])(0) ;
          }
-         cudaStreamSynchronize(stream);
          MPI_Isend(comBuf, xferFields, baseType, toRank, msgType,
                    MPI_COMM_WORLD, &domain.sendRequest[pmsg+emsg+cmsg]) ;
          ++cmsg ;
@@ -853,9 +751,8 @@ void CommSendGpu(Domain& domain, int msgType,
                                          cmsg * CACHE_COHERENCE_PAD_REAL] ;
          Index_t idx = dx*dy*(dz - 1) ;
          for (Index_t fi=0; fi<xferFields; ++fi) {
-            cudaMemcpyAsync(&comBuf[fi], &(domain.*fieldData[fi])(idx), sizeof(Real_t), cudaMemcpyDeviceToHost, stream);
+            comBuf[fi] = (domain.*fieldData[fi])(idx) ;
          }
-         cudaStreamSynchronize(stream);
          MPI_Isend(comBuf, xferFields, baseType, toRank, msgType,
                    MPI_COMM_WORLD, &domain.sendRequest[pmsg+emsg+cmsg]) ;
          ++cmsg ;
@@ -868,9 +765,8 @@ void CommSendGpu(Domain& domain, int msgType,
                                          cmsg * CACHE_COHERENCE_PAD_REAL] ;
          Index_t idx = dx - 1 ;
          for (Index_t fi=0; fi<xferFields; ++fi) {
-            cudaMemcpyAsync(&comBuf[fi], &(domain.*fieldData[fi])(idx), sizeof(Real_t), cudaMemcpyDeviceToHost, stream);
+            comBuf[fi] = (domain.*fieldData[fi])(idx) ;
          }
-         cudaStreamSynchronize(stream);
          MPI_Isend(comBuf, xferFields, baseType, toRank, msgType,
                    MPI_COMM_WORLD, &domain.sendRequest[pmsg+emsg+cmsg]) ;
          ++cmsg ;
@@ -883,9 +779,8 @@ void CommSendGpu(Domain& domain, int msgType,
                                          cmsg * CACHE_COHERENCE_PAD_REAL] ;
          Index_t idx = dx*dy*(dz - 1) + (dx - 1) ;
          for (Index_t fi=0; fi<xferFields; ++fi) {
-            cudaMemcpyAsync(&comBuf[fi], &(domain.*fieldData[fi])(idx), sizeof(Real_t), cudaMemcpyDeviceToHost, stream);
+            comBuf[fi] = (domain.*fieldData[fi])(idx) ;
          }
-         cudaStreamSynchronize(stream);
          MPI_Isend(comBuf, xferFields, baseType, toRank, msgType,
                    MPI_COMM_WORLD, &domain.sendRequest[pmsg+emsg+cmsg]) ;
          ++cmsg ;
@@ -898,9 +793,8 @@ void CommSendGpu(Domain& domain, int msgType,
                                          cmsg * CACHE_COHERENCE_PAD_REAL] ;
          Index_t idx = dx*(dy - 1) ;
          for (Index_t fi=0; fi<xferFields; ++fi) {
-            cudaMemcpyAsync(&comBuf[fi], &(domain.*fieldData[fi])(idx), sizeof(Real_t), cudaMemcpyDeviceToHost, stream);
+            comBuf[fi] = (domain.*fieldData[fi])(idx) ;
          }
-         cudaStreamSynchronize(stream);
          MPI_Isend(comBuf, xferFields, baseType, toRank, msgType,
                    MPI_COMM_WORLD, &domain.sendRequest[pmsg+emsg+cmsg]) ;
          ++cmsg ;
@@ -913,9 +807,8 @@ void CommSendGpu(Domain& domain, int msgType,
                                          cmsg * CACHE_COHERENCE_PAD_REAL] ;
          Index_t idx = dx*dy*(dz - 1) + dx*(dy - 1) ;
          for (Index_t fi=0; fi<xferFields; ++fi) {
-            cudaMemcpyAsync(&comBuf[fi], &(domain.*fieldData[fi])(idx), sizeof(Real_t), cudaMemcpyDeviceToHost, stream);
+            comBuf[fi] = (domain.*fieldData[fi])(idx) ;
          }
-         cudaStreamSynchronize(stream);
          MPI_Isend(comBuf, xferFields, baseType, toRank, msgType,
                    MPI_COMM_WORLD, &domain.sendRequest[pmsg+emsg+cmsg]) ;
          ++cmsg ;
@@ -928,9 +821,8 @@ void CommSendGpu(Domain& domain, int msgType,
                                          cmsg * CACHE_COHERENCE_PAD_REAL] ;
          Index_t idx = dx*dy - 1 ;
          for (Index_t fi=0; fi<xferFields; ++fi) {
-            cudaMemcpyAsync(&comBuf[fi], &(domain.*fieldData[fi])(idx), sizeof(Real_t), cudaMemcpyDeviceToHost, stream);
+            comBuf[fi] = (domain.*fieldData[fi])(idx) ;
          }
-         cudaStreamSynchronize(stream);
          MPI_Isend(comBuf, xferFields, baseType, toRank, msgType,
                    MPI_COMM_WORLD, &domain.sendRequest[pmsg+emsg+cmsg]) ;
          ++cmsg ;
@@ -943,9 +835,8 @@ void CommSendGpu(Domain& domain, int msgType,
                                          cmsg * CACHE_COHERENCE_PAD_REAL] ;
          Index_t idx = dx*dy*dz - 1 ;
          for (Index_t fi=0; fi<xferFields; ++fi) {
-            cudaMemcpyAsync(&comBuf[fi], &(domain.*fieldData[fi])(idx), sizeof(Real_t), cudaMemcpyDeviceToHost, stream);
+            comBuf[fi] = (domain.*fieldData[fi])(idx) ;
          }
-         cudaStreamSynchronize(stream);
          MPI_Isend(comBuf, xferFields, baseType, toRank, msgType,
                    MPI_COMM_WORLD, &domain.sendRequest[pmsg+emsg+cmsg]) ;
          ++cmsg ;
@@ -957,16 +848,7 @@ void CommSendGpu(Domain& domain, int msgType,
 
 /******************************************/
 
-/**
- * @brief GPU version of CommSBN function that uses CUDA streams for parallel execution
- * @details This function exchanges data at domain boundaries and combines values
- *          by adding contributions from neighboring domains using GPU kernels
- * @param domain The simulation domain
- * @param xferFields Number of fields to transfer
- * @param fieldData Pointers to domain data fields being transferred
- * @param streams Array of CUDA streams for parallel execution
- */
-void CommSBNGpu(Domain& domain, int xferFields, Domain_member *fieldData, cudaStream_t *streams) {
+void CommSBN(Domain& domain, int xferFields, Domain_member *fieldData) {
 
    if (domain.numRanks() == 1)
       return ;
@@ -985,7 +867,6 @@ void CommSBNGpu(Domain& domain, int xferFields, Domain_member *fieldData, cudaSt
    Index_t dz = domain.sizeZ + 1 ;
    MPI_Status status ;
    Real_t *srcAddr ;
-   Real_t *d_srcAddr ;
    Index_t rowMin, rowMax, colMin, colMax, planeMin, planeMax ;
    /* assume communication to 6 neighbors by default */
    rowMin = rowMax = colMin = colMax = planeMin = planeMax = 1 ;
@@ -1008,13 +889,6 @@ void CommSBNGpu(Domain& domain, int xferFields, Domain_member *fieldData, cudaSt
       planeMax = 0 ;
    }
 
-   // setup launch grid
-   const int block = 128;
-
-   // streams
-   int s = 0;
-   cudaStream_t stream;
-
    MPI_Comm_rank(MPI_COMM_WORLD, &myRank) ;
 
    if (planeMin | planeMax) {
@@ -1023,29 +897,27 @@ void CommSBNGpu(Domain& domain, int xferFields, Domain_member *fieldData, cudaSt
 
       if (planeMin) {
          /* contiguous memory */
-	 stream = streams[s++];
          srcAddr = &domain.commDataRecv[pmsg * maxPlaneComm] ;
-         d_srcAddr = &domain.d_commDataRecv[pmsg * maxPlaneComm] ;
          MPI_Wait(&domain.recvRequest[pmsg], &status) ;
-         cudaMemcpyAsync(d_srcAddr, srcAddr, xferFields*opCount*sizeof(Real_t), cudaMemcpyHostToDevice, stream);
          for (Index_t fi=0 ; fi<xferFields; ++fi) {
             Domain_member dest = fieldData[fi] ;
-	    AddPlane<0><<<(opCount+block-1)/block,block,0,stream>>>(d_srcAddr, &(domain.*dest)(0), opCount, dx, dy, dz);
-            d_srcAddr += opCount ;
+            for (Index_t i=0; i<opCount; ++i) {
+               (domain.*dest)(i) += srcAddr[i] ;
+            }
+            srcAddr += opCount ;
          }
          ++pmsg ;
       }
       if (planeMax) {
          /* contiguous memory */
-	 stream = streams[s++];
          srcAddr = &domain.commDataRecv[pmsg * maxPlaneComm] ;
-         d_srcAddr = &domain.d_commDataRecv[pmsg * maxPlaneComm] ;
          MPI_Wait(&domain.recvRequest[pmsg], &status) ;
-         cudaMemcpyAsync(d_srcAddr, srcAddr, xferFields*opCount*sizeof(Real_t), cudaMemcpyHostToDevice, stream);
          for (Index_t fi=0 ; fi<xferFields; ++fi) {
             Domain_member dest = fieldData[fi] ;
-	    AddPlane<1><<<(opCount+block-1)/block,block,0,stream>>>(d_srcAddr, &(domain.*dest)(0), opCount, dx, dy, dz);
-            d_srcAddr += opCount ;
+            for (Index_t i=0; i<opCount; ++i) {
+               (domain.*dest)(dx*dy*(dz - 1) + i) += srcAddr[i] ;
+            }
+            srcAddr += opCount ;
          }
          ++pmsg ;
       }
@@ -1057,29 +929,31 @@ void CommSBNGpu(Domain& domain, int xferFields, Domain_member *fieldData, cudaSt
 
       if (rowMin) {
          /* contiguous memory */
-	 stream = streams[s++];
          srcAddr = &domain.commDataRecv[pmsg * maxPlaneComm] ;
-         d_srcAddr = &domain.d_commDataRecv[pmsg * maxPlaneComm] ;
          MPI_Wait(&domain.recvRequest[pmsg], &status) ;
-         cudaMemcpyAsync(d_srcAddr, srcAddr, xferFields*opCount*sizeof(Real_t), cudaMemcpyHostToDevice, stream);
          for (Index_t fi=0 ; fi<xferFields; ++fi) {
             Domain_member dest = fieldData[fi] ;
-	    AddPlane<2><<<(opCount+block-1)/block,block,0,stream>>>(d_srcAddr, &(domain.*dest)(0), opCount, dx, dy, dz);
-            d_srcAddr += opCount ;
+            for (Index_t i=0; i<dz; ++i) {
+               for (Index_t j=0; j<dx; ++j) {
+                  (domain.*dest)(i*dx*dy + j) += srcAddr[i*dx + j] ;
+               }
+            }
+            srcAddr += opCount ;
          }
          ++pmsg ;
       }
       if (rowMax) {
          /* contiguous memory */
-	 stream = streams[s++];
          srcAddr = &domain.commDataRecv[pmsg * maxPlaneComm] ;
-         d_srcAddr = &domain.d_commDataRecv[pmsg * maxPlaneComm] ;
          MPI_Wait(&domain.recvRequest[pmsg], &status) ;
-         cudaMemcpyAsync(d_srcAddr, srcAddr, xferFields*opCount*sizeof(Real_t), cudaMemcpyHostToDevice, stream);
          for (Index_t fi=0 ; fi<xferFields; ++fi) {
             Domain_member dest = fieldData[fi] ;
-	    AddPlane<3><<<(opCount+block-1)/block,block,0,stream>>>(d_srcAddr, &(domain.*dest)(0), opCount, dx, dy, dz);
-            d_srcAddr += opCount ;
+            for (Index_t i=0; i<dz; ++i) {
+               for (Index_t j=0; j<dx; ++j) {
+                  (domain.*dest)(dx*(dy - 1) + i*dx*dy + j) += srcAddr[i*dx + j] ;
+               }
+            }
+            srcAddr += opCount ;
          }
          ++pmsg ;
       }
@@ -1090,240 +964,216 @@ void CommSBNGpu(Domain& domain, int xferFields, Domain_member *fieldData, cudaSt
 
       if (colMin) {
          /* contiguous memory */
-	 stream = streams[s++];
          srcAddr = &domain.commDataRecv[pmsg * maxPlaneComm] ;
-         d_srcAddr = &domain.d_commDataRecv[pmsg * maxPlaneComm] ;
          MPI_Wait(&domain.recvRequest[pmsg], &status) ;
-         cudaMemcpyAsync(d_srcAddr, srcAddr, xferFields*opCount*sizeof(Real_t), cudaMemcpyHostToDevice, stream);
          for (Index_t fi=0 ; fi<xferFields; ++fi) {
             Domain_member dest = fieldData[fi] ;
-	    AddPlane<4><<<(opCount+block-1)/block,block,0,stream>>>(d_srcAddr, &(domain.*dest)(0), opCount, dx, dy, dz);
-            d_srcAddr += opCount ;
+            for (Index_t i=0; i<dz; ++i) {
+               for (Index_t j=0; j<dy; ++j) {
+                  (domain.*dest)(i*dx*dy + j*dx) += srcAddr[i*dy + j] ;
+               }
+            }
+            srcAddr += opCount ;
          }
          ++pmsg ;
       }
       if (colMax) {
          /* contiguous memory */
-	 stream = streams[s++];
          srcAddr = &domain.commDataRecv[pmsg * maxPlaneComm] ;
-         d_srcAddr = &domain.d_commDataRecv[pmsg * maxPlaneComm] ;
          MPI_Wait(&domain.recvRequest[pmsg], &status) ;
-         cudaMemcpyAsync(d_srcAddr, srcAddr, xferFields*opCount*sizeof(Real_t), cudaMemcpyHostToDevice, stream);
          for (Index_t fi=0 ; fi<xferFields; ++fi) {
             Domain_member dest = fieldData[fi] ;
-	    AddPlane<5><<<(opCount+block-1)/block,block,0,stream>>>(d_srcAddr, &(domain.*dest)(0), opCount, dx, dy, dz);
-            d_srcAddr += opCount ;
+            for (Index_t i=0; i<dz; ++i) {
+               for (Index_t j=0; j<dy; ++j) {
+                  (domain.*dest)(dx - 1 + i*dx*dy + j*dx) += srcAddr[i*dy + j] ;
+               }
+            }
+            srcAddr += opCount ;
          }
          ++pmsg ;
       }
    }
 
    if (rowMin & colMin) {
-      stream = streams[s++];
       srcAddr = &domain.commDataRecv[pmsg * maxPlaneComm +
                                        emsg * maxEdgeComm] ;
-      d_srcAddr = &domain.d_commDataRecv[pmsg * maxPlaneComm +
-                                       emsg * maxEdgeComm] ;
       MPI_Wait(&domain.recvRequest[pmsg+emsg], &status) ;
-      cudaMemcpyAsync(d_srcAddr, srcAddr, xferFields*dz*sizeof(Real_t), cudaMemcpyHostToDevice, stream);
       for (Index_t fi=0 ; fi<xferFields; ++fi) {
          Domain_member dest = fieldData[fi] ;
-	 AddEdge<0><<<(dz+block-1)/block,block,0,stream>>>(d_srcAddr, &(domain.*dest)(0), dz, dx, dy, dz);
-         d_srcAddr += dz ;
+         for (Index_t i=0; i<dz; ++i) {
+            (domain.*dest)(i*dx*dy) += srcAddr[i] ;
+         }
+         srcAddr += dz ;
       }
       ++emsg ;
    }
 
    if (rowMin & planeMin) {
-      stream = streams[s++];
       srcAddr = &domain.commDataRecv[pmsg * maxPlaneComm +
                                        emsg * maxEdgeComm] ;
-      d_srcAddr = &domain.d_commDataRecv[pmsg * maxPlaneComm +
-                                       emsg * maxEdgeComm] ;
       MPI_Wait(&domain.recvRequest[pmsg+emsg], &status) ;
-      cudaMemcpyAsync(d_srcAddr, srcAddr, xferFields*dx*sizeof(Real_t), cudaMemcpyHostToDevice, stream);
       for (Index_t fi=0 ; fi<xferFields; ++fi) {
          Domain_member dest = fieldData[fi] ;
-	 AddEdge<1><<<(dx+block-1)/block,block,0,stream>>>(d_srcAddr, &(domain.*dest)(0), dx, dx, dy, dz);
-         d_srcAddr += dx ;
+         for (Index_t i=0; i<dx; ++i) {
+            (domain.*dest)(i) += srcAddr[i] ;
+         }
+         srcAddr += dx ;
       }
       ++emsg ;
    }
 
    if (colMin & planeMin) {
-      stream = streams[s++];
       srcAddr = &domain.commDataRecv[pmsg * maxPlaneComm +
                                        emsg * maxEdgeComm] ;
-      d_srcAddr = &domain.d_commDataRecv[pmsg * maxPlaneComm +
-                                       emsg * maxEdgeComm] ;
       MPI_Wait(&domain.recvRequest[pmsg+emsg], &status) ;
-      cudaMemcpyAsync(d_srcAddr, srcAddr, xferFields*dy*sizeof(Real_t), cudaMemcpyHostToDevice, stream);
       for (Index_t fi=0 ; fi<xferFields; ++fi) {
          Domain_member dest = fieldData[fi] ;
-	 AddEdge<2><<<(dy+block-1)/block,block,0,stream>>>(d_srcAddr, &(domain.*dest)(0), dy, dx, dy, dz);
-         d_srcAddr += dy ;
+         for (Index_t i=0; i<dy; ++i) {
+            (domain.*dest)(i*dx) += srcAddr[i] ;
+         }
+         srcAddr += dy ;
       }
       ++emsg ;
    }
 
    if (rowMax & colMax) {
-      stream = streams[s++];
       srcAddr = &domain.commDataRecv[pmsg * maxPlaneComm +
                                        emsg * maxEdgeComm] ;
-      d_srcAddr = &domain.d_commDataRecv[pmsg * maxPlaneComm +
-                                       emsg * maxEdgeComm] ;
       MPI_Wait(&domain.recvRequest[pmsg+emsg], &status) ;
-      cudaMemcpyAsync(d_srcAddr, srcAddr, xferFields*dz*sizeof(Real_t), cudaMemcpyHostToDevice, stream);
       for (Index_t fi=0 ; fi<xferFields; ++fi) {
          Domain_member dest = fieldData[fi] ;
-	 AddEdge<3><<<(dz+block-1)/block,block,0,stream>>>(d_srcAddr, &(domain.*dest)(0), dz, dx, dy, dz);
-         d_srcAddr += dz ;
+         for (Index_t i=0; i<dz; ++i) {
+            (domain.*dest)(dx*dy - 1 + i*dx*dy) += srcAddr[i] ;
+         }
+         srcAddr += dz ;
       }
       ++emsg ;
    }
 
    if (rowMax & planeMax) {
-      stream = streams[s++];
       srcAddr = &domain.commDataRecv[pmsg * maxPlaneComm +
                                        emsg * maxEdgeComm] ;
-      d_srcAddr = &domain.d_commDataRecv[pmsg * maxPlaneComm +
-                                       emsg * maxEdgeComm] ;
       MPI_Wait(&domain.recvRequest[pmsg+emsg], &status) ;
-      cudaMemcpyAsync(d_srcAddr, srcAddr, xferFields*dx*sizeof(Real_t), cudaMemcpyHostToDevice, stream);
       for (Index_t fi=0 ; fi<xferFields; ++fi) {
          Domain_member dest = fieldData[fi] ;
-	 AddEdge<4><<<(dx+block-1)/block,block,0,stream>>>(d_srcAddr, &(domain.*dest)(0), dx, dx, dy, dz);
-         d_srcAddr += dx ;
+         for (Index_t i=0; i<dx; ++i) {
+            (domain.*dest)(dx*(dy-1) + dx*dy*(dz-1) + i) += srcAddr[i] ;
+         }
+         srcAddr += dx ;
       }
       ++emsg ;
    }
 
    if (colMax & planeMax) {
-      stream = streams[s++];
       srcAddr = &domain.commDataRecv[pmsg * maxPlaneComm +
                                        emsg * maxEdgeComm] ;
-      d_srcAddr = &domain.d_commDataRecv[pmsg * maxPlaneComm +
-                                       emsg * maxEdgeComm] ;
       MPI_Wait(&domain.recvRequest[pmsg+emsg], &status) ;
-      cudaMemcpyAsync(d_srcAddr, srcAddr, xferFields*dy*sizeof(Real_t), cudaMemcpyHostToDevice, stream);
       for (Index_t fi=0 ; fi<xferFields; ++fi) {
          Domain_member dest = fieldData[fi] ;
-	 AddEdge<5><<<(dy+block-1)/block,block,0,stream>>>(d_srcAddr, &(domain.*dest)(0), dy, dx, dy, dz);
-         d_srcAddr += dy ;
+         for (Index_t i=0; i<dy; ++i) {
+            (domain.*dest)(dx*dy*(dz-1) + dx - 1 + i*dx) += srcAddr[i] ;
+         }
+         srcAddr += dy ;
       }
       ++emsg ;
    }
 
    if (rowMax & colMin) {
-      stream = streams[s++];
       srcAddr = &domain.commDataRecv[pmsg * maxPlaneComm +
                                        emsg * maxEdgeComm] ;
-      d_srcAddr = &domain.d_commDataRecv[pmsg * maxPlaneComm +
-                                       emsg * maxEdgeComm] ;
       MPI_Wait(&domain.recvRequest[pmsg+emsg], &status) ;
-      cudaMemcpyAsync(d_srcAddr, srcAddr, xferFields*dz*sizeof(Real_t), cudaMemcpyHostToDevice, stream);
       for (Index_t fi=0 ; fi<xferFields; ++fi) {
          Domain_member dest = fieldData[fi] ;
-	 AddEdge<6><<<(dz+block-1)/block,block,0,stream>>>(d_srcAddr, &(domain.*dest)(0), dz, dx, dy, dz);
-         d_srcAddr += dz ;
+         for (Index_t i=0; i<dz; ++i) {
+            (domain.*dest)(dx*(dy-1) + i*dx*dy) += srcAddr[i] ;
+         }
+         srcAddr += dz ;
       }
       ++emsg ;
    }
 
    if (rowMin & planeMax) {
-      stream = streams[s++];
       srcAddr = &domain.commDataRecv[pmsg * maxPlaneComm +
                                        emsg * maxEdgeComm] ;
-      d_srcAddr = &domain.d_commDataRecv[pmsg * maxPlaneComm +
-                                       emsg * maxEdgeComm] ;
       MPI_Wait(&domain.recvRequest[pmsg+emsg], &status) ;
-      cudaMemcpyAsync(d_srcAddr, srcAddr, xferFields*dx*sizeof(Real_t), cudaMemcpyHostToDevice, stream);
       for (Index_t fi=0 ; fi<xferFields; ++fi) {
          Domain_member dest = fieldData[fi] ;
-	 AddEdge<7><<<(dx+block-1)/block,block,0,stream>>>(d_srcAddr, &(domain.*dest)(0), dx, dx, dy, dz);
-         d_srcAddr += dx ;
+         for (Index_t i=0; i<dx; ++i) {
+            (domain.*dest)(dx*dy*(dz-1) + i) += srcAddr[i] ;
+         }
+         srcAddr += dx ;
       }
       ++emsg ;
    }
 
    if (colMin & planeMax) {
-      stream = streams[s++];
       srcAddr = &domain.commDataRecv[pmsg * maxPlaneComm +
                                        emsg * maxEdgeComm] ;
-      d_srcAddr = &domain.d_commDataRecv[pmsg * maxPlaneComm +
-                                       emsg * maxEdgeComm] ;
       MPI_Wait(&domain.recvRequest[pmsg+emsg], &status) ;
-      cudaMemcpyAsync(d_srcAddr, srcAddr, xferFields*dy*sizeof(Real_t), cudaMemcpyHostToDevice, stream);
       for (Index_t fi=0 ; fi<xferFields; ++fi) {
          Domain_member dest = fieldData[fi] ;
-	 AddEdge<8><<<(dy+block-1)/block,block,0,stream>>>(d_srcAddr, &(domain.*dest)(0), dy, dx, dy, dz);
-         d_srcAddr += dy ;
+         for (Index_t i=0; i<dy; ++i) {
+            (domain.*dest)(dx*dy*(dz-1) + i*dx) += srcAddr[i] ;
+         }
+         srcAddr += dy ;
       }
       ++emsg ;
    }
 
    if (rowMin & colMax) {
-      stream = streams[s++];
       srcAddr = &domain.commDataRecv[pmsg * maxPlaneComm +
                                        emsg * maxEdgeComm] ;
-      d_srcAddr = &domain.d_commDataRecv[pmsg * maxPlaneComm +
-                                       emsg * maxEdgeComm] ;
       MPI_Wait(&domain.recvRequest[pmsg+emsg], &status) ;
-      cudaMemcpyAsync(d_srcAddr, srcAddr, xferFields*dz*sizeof(Real_t), cudaMemcpyHostToDevice, stream);
       for (Index_t fi=0 ; fi<xferFields; ++fi) {
          Domain_member dest = fieldData[fi] ;
-	 AddEdge<9><<<(dz+block-1)/block,block,0,stream>>>(d_srcAddr, &(domain.*dest)(0), dz, dx, dy, dz);
-         d_srcAddr += dz ;
+         for (Index_t i=0; i<dz; ++i) {
+            (domain.*dest)(dx - 1 + i*dx*dy) += srcAddr[i] ;
+         }
+         srcAddr += dz ;
       }
       ++emsg ;
    }
 
    if (rowMax & planeMin) {
-      stream = streams[s++];
       srcAddr = &domain.commDataRecv[pmsg * maxPlaneComm +
                                        emsg * maxEdgeComm] ;
-      d_srcAddr = &domain.d_commDataRecv[pmsg * maxPlaneComm +
-                                       emsg * maxEdgeComm] ;
       MPI_Wait(&domain.recvRequest[pmsg+emsg], &status) ;
-      cudaMemcpyAsync(d_srcAddr, srcAddr, xferFields*dx*sizeof(Real_t), cudaMemcpyHostToDevice, stream);
       for (Index_t fi=0 ; fi<xferFields; ++fi) {
          Domain_member dest = fieldData[fi] ;
-	 AddEdge<10><<<(dx+block-1)/block,block,0,stream>>>(d_srcAddr, &(domain.*dest)(0), dx, dx, dy, dz);
-         d_srcAddr += dx ;
+         for (Index_t i=0; i<dx; ++i) {
+            (domain.*dest)(dx*(dy - 1) + i) += srcAddr[i] ;
+         }
+         srcAddr += dx ;
       }
       ++emsg ;
    }
 
    if (colMax & planeMin) {
-      stream = streams[s++];
       srcAddr = &domain.commDataRecv[pmsg * maxPlaneComm +
                                        emsg * maxEdgeComm] ;
-      d_srcAddr = &domain.d_commDataRecv[pmsg * maxPlaneComm +
-                                       emsg * maxEdgeComm] ;
       MPI_Wait(&domain.recvRequest[pmsg+emsg], &status) ;
-      cudaMemcpyAsync(d_srcAddr, srcAddr, xferFields*dy*sizeof(Real_t), cudaMemcpyHostToDevice, stream);
       for (Index_t fi=0 ; fi<xferFields; ++fi) {
          Domain_member dest = fieldData[fi] ;
-	 AddEdge<11><<<(dy+block-1)/block,block,0,stream>>>(d_srcAddr, &(domain.*dest)(0), dy, dx, dy, dz);
-         d_srcAddr += dy ;
+         for (Index_t i=0; i<dy; ++i) {
+            (domain.*dest)(dx - 1 + i*dx) += srcAddr[i] ;
+         }
+         srcAddr += dy ;
       }
       ++emsg ;
    }
 
    if (rowMin & colMin & planeMin) {
-      stream = streams[s++];
       /* corner at domain logical coord (0, 0, 0) */
       Real_t *comBuf = &domain.commDataRecv[pmsg * maxPlaneComm +
                                              emsg * maxEdgeComm +
                                       cmsg * CACHE_COHERENCE_PAD_REAL] ;
       MPI_Wait(&domain.recvRequest[pmsg+emsg+cmsg], &status) ;
       for (Index_t fi=0; fi<xferFields; ++fi) {
-         AddCorner<<<1,1,0,stream>>>(&(domain.*fieldData[fi])(0), comBuf[fi]) ;
+         (domain.*fieldData[fi])(0) += comBuf[fi] ;
       }
       ++cmsg ;
    }
    if (rowMin & colMin & planeMax) {
-      stream = streams[s++];
       /* corner at domain logical coord (0, 0, 1) */
       Real_t *comBuf = &domain.commDataRecv[pmsg * maxPlaneComm +
                                              emsg * maxEdgeComm +
@@ -1331,12 +1181,11 @@ void CommSBNGpu(Domain& domain, int xferFields, Domain_member *fieldData, cudaSt
       Index_t idx = dx*dy*(dz - 1) ;
       MPI_Wait(&domain.recvRequest[pmsg+emsg+cmsg], &status) ;
       for (Index_t fi=0; fi<xferFields; ++fi) {
-         AddCorner<<<1,1,0,stream>>>(&(domain.*fieldData[fi])(idx), comBuf[fi]) ;
+         (domain.*fieldData[fi])(idx) += comBuf[fi] ;
       }
       ++cmsg ;
    }
    if (rowMin & colMax & planeMin) {
-      stream = streams[s++];
       /* corner at domain logical coord (1, 0, 0) */
       Real_t *comBuf = &domain.commDataRecv[pmsg * maxPlaneComm +
                                              emsg * maxEdgeComm +
@@ -1344,12 +1193,11 @@ void CommSBNGpu(Domain& domain, int xferFields, Domain_member *fieldData, cudaSt
       Index_t idx = dx - 1 ;
       MPI_Wait(&domain.recvRequest[pmsg+emsg+cmsg], &status) ;
       for (Index_t fi=0; fi<xferFields; ++fi) {
-         AddCorner<<<1,1,0,stream>>>(&(domain.*fieldData[fi])(idx), comBuf[fi]) ;
+         (domain.*fieldData[fi])(idx) += comBuf[fi] ;
       }
       ++cmsg ;
    }
    if (rowMin & colMax & planeMax) {
-      stream = streams[s++];
       /* corner at domain logical coord (1, 0, 1) */
       Real_t *comBuf = &domain.commDataRecv[pmsg * maxPlaneComm +
                                              emsg * maxEdgeComm +
@@ -1357,12 +1205,11 @@ void CommSBNGpu(Domain& domain, int xferFields, Domain_member *fieldData, cudaSt
       Index_t idx = dx*dy*(dz - 1) + (dx - 1) ;
       MPI_Wait(&domain.recvRequest[pmsg+emsg+cmsg], &status) ;
       for (Index_t fi=0; fi<xferFields; ++fi) {
-         AddCorner<<<1,1,0,stream>>>(&(domain.*fieldData[fi])(idx), comBuf[fi]) ;
+         (domain.*fieldData[fi])(idx) += comBuf[fi] ;
       }
       ++cmsg ;
    }
    if (rowMax & colMin & planeMin) {
-      stream = streams[s++];
       /* corner at domain logical coord (0, 1, 0) */
       Real_t *comBuf = &domain.commDataRecv[pmsg * maxPlaneComm +
                                              emsg * maxEdgeComm +
@@ -1370,12 +1217,11 @@ void CommSBNGpu(Domain& domain, int xferFields, Domain_member *fieldData, cudaSt
       Index_t idx = dx*(dy - 1) ;
       MPI_Wait(&domain.recvRequest[pmsg+emsg+cmsg], &status) ;
       for (Index_t fi=0; fi<xferFields; ++fi) {
-         AddCorner<<<1,1,0,stream>>>(&(domain.*fieldData[fi])(idx), comBuf[fi]) ;
+         (domain.*fieldData[fi])(idx) += comBuf[fi] ;
       }
       ++cmsg ;
    }
    if (rowMax & colMin & planeMax) {
-      stream = streams[s++];
       /* corner at domain logical coord (0, 1, 1) */
       Real_t *comBuf = &domain.commDataRecv[pmsg * maxPlaneComm +
                                              emsg * maxEdgeComm +
@@ -1383,12 +1229,11 @@ void CommSBNGpu(Domain& domain, int xferFields, Domain_member *fieldData, cudaSt
       Index_t idx = dx*dy*(dz - 1) + dx*(dy - 1) ;
       MPI_Wait(&domain.recvRequest[pmsg+emsg+cmsg], &status) ;
       for (Index_t fi=0; fi<xferFields; ++fi) {
-         AddCorner<<<1,1,0,stream>>>(&(domain.*fieldData[fi])(idx), comBuf[fi]) ;
+         (domain.*fieldData[fi])(idx) += comBuf[fi] ;
       }
       ++cmsg ;
    }
    if (rowMax & colMax & planeMin) {
-      stream = streams[s++];
       /* corner at domain logical coord (1, 1, 0) */
       Real_t *comBuf = &domain.commDataRecv[pmsg * maxPlaneComm +
                                              emsg * maxEdgeComm +
@@ -1396,12 +1241,11 @@ void CommSBNGpu(Domain& domain, int xferFields, Domain_member *fieldData, cudaSt
       Index_t idx = dx*dy - 1 ;
       MPI_Wait(&domain.recvRequest[pmsg+emsg+cmsg], &status) ;
       for (Index_t fi=0; fi<xferFields; ++fi) {
-         AddCorner<<<1,1,0,stream>>>(&(domain.*fieldData[fi])(idx), comBuf[fi]) ;
+         (domain.*fieldData[fi])(idx) += comBuf[fi] ;
       }
       ++cmsg ;
    }
    if (rowMax & colMax & planeMax) {
-      stream = streams[s++];
       /* corner at domain logical coord (1, 1, 1) */
       Real_t *comBuf = &domain.commDataRecv[pmsg * maxPlaneComm +
                                              emsg * maxEdgeComm +
@@ -1409,18 +1253,15 @@ void CommSBNGpu(Domain& domain, int xferFields, Domain_member *fieldData, cudaSt
       Index_t idx = dx*dy*dz - 1 ;
       MPI_Wait(&domain.recvRequest[pmsg+emsg+cmsg], &status) ;
       for (Index_t fi=0; fi<xferFields; ++fi) {
-         AddCorner<<<1,1,0,stream>>>(&(domain.*fieldData[fi])(idx), comBuf[fi]) ;
+         (domain.*fieldData[fi])(idx) += comBuf[fi] ;
       }
       ++cmsg ;
    }
-
-   // don't need to call synchronize since it will be done automatically 
-   // before kernels start to execute in NULL stream
 }
 
 /******************************************/
 
-void CommSyncPosVelGpu(Domain& domain, cudaStream_t *streams) {
+void CommSyncPosVel(Domain& domain) {
 
    if (domain.numRanks() == 1)
       return ;
@@ -1439,7 +1280,6 @@ void CommSyncPosVelGpu(Domain& domain, cudaStream_t *streams) {
    Index_t dz = domain.sizeZ + 1 ;
    MPI_Status status ;
    Real_t *srcAddr ;
-   Real_t *d_srcAddr ;
    bool rowMin, rowMax, colMin, colMax, planeMin, planeMax ;
 
    /* assume communication to 6 neighbors by default */
@@ -1470,13 +1310,6 @@ void CommSyncPosVelGpu(Domain& domain, cudaStream_t *streams) {
    fieldData[4] = &Domain::get_yd ;
    fieldData[5] = &Domain::get_zd ;
 
-   // setup launch grid
-   const int block = 128;
-
-   // streams
-   int s = 0;
-   cudaStream_t stream;
-
    MPI_Comm_rank(MPI_COMM_WORLD, &myRank) ;
 
    if (planeMin | planeMax) {
@@ -1485,29 +1318,27 @@ void CommSyncPosVelGpu(Domain& domain, cudaStream_t *streams) {
 
       if (planeMin && doRecv) {
          /* contiguous memory */
-	 stream = streams[s++];
          srcAddr = &domain.commDataRecv[pmsg * maxPlaneComm] ;
-         d_srcAddr = &domain.d_commDataRecv[pmsg * maxPlaneComm] ;
          MPI_Wait(&domain.recvRequest[pmsg], &status) ;
-         cudaMemcpyAsync(d_srcAddr, srcAddr, xferFields*opCount*sizeof(Real_t), cudaMemcpyHostToDevice, stream);
          for (Index_t fi=0 ; fi<xferFields; ++fi) {
             Domain_member dest = fieldData[fi] ;
-	    CopyPlane<0><<<(opCount+block-1)/block,block,0,stream>>>(d_srcAddr, &(domain.*dest)(0), opCount, dx, dy, dz);
-            d_srcAddr += opCount ;
+            for (Index_t i=0; i<opCount; ++i) {
+               (domain.*dest)(i) = srcAddr[i] ;
+            }
+            srcAddr += opCount ;
          }
          ++pmsg ;
       }
       if (planeMax) {
          /* contiguous memory */
-	 stream = streams[s++];
          srcAddr = &domain.commDataRecv[pmsg * maxPlaneComm] ;
-         d_srcAddr = &domain.d_commDataRecv[pmsg * maxPlaneComm] ;
          MPI_Wait(&domain.recvRequest[pmsg], &status) ;
-         cudaMemcpyAsync(d_srcAddr, srcAddr, xferFields*opCount*sizeof(Real_t), cudaMemcpyHostToDevice, stream);
          for (Index_t fi=0 ; fi<xferFields; ++fi) {
             Domain_member dest = fieldData[fi] ;
-	    CopyPlane<1><<<(opCount+block-1)/block,block,0,stream>>>(d_srcAddr, &(domain.*dest)(0), opCount, dx, dy, dz);
-            d_srcAddr += opCount ;
+            for (Index_t i=0; i<opCount; ++i) {
+               (domain.*dest)(dx*dy*(dz - 1) + i) = srcAddr[i] ;
+            }
+            srcAddr += opCount ;
          }
          ++pmsg ;
       }
@@ -1519,273 +1350,253 @@ void CommSyncPosVelGpu(Domain& domain, cudaStream_t *streams) {
 
       if (rowMin && doRecv) {
          /* contiguous memory */
-	 stream = streams[s++];
          srcAddr = &domain.commDataRecv[pmsg * maxPlaneComm] ;
-         d_srcAddr = &domain.d_commDataRecv[pmsg * maxPlaneComm] ;
          MPI_Wait(&domain.recvRequest[pmsg], &status) ;
-         cudaMemcpyAsync(d_srcAddr, srcAddr, xferFields*opCount*sizeof(Real_t), cudaMemcpyHostToDevice, stream);
          for (Index_t fi=0 ; fi<xferFields; ++fi) {
             Domain_member dest = fieldData[fi] ;
-	    CopyPlane<2><<<(opCount+block-1)/block,block,0,stream>>>(d_srcAddr, &(domain.*dest)(0), opCount, dx, dy, dz);
-            d_srcAddr += opCount ;
+            for (Index_t i=0; i<dz; ++i) {
+               for (Index_t j=0; j<dx; ++j) {
+                  (domain.*dest)(i*dx*dy + j) = srcAddr[i*dx + j] ;
+               }
+            }
+            srcAddr += opCount ;
          }
          ++pmsg ;
       }
       if (rowMax) {
          /* contiguous memory */
-	 stream = streams[s++];
          srcAddr = &domain.commDataRecv[pmsg * maxPlaneComm] ;
-         d_srcAddr = &domain.d_commDataRecv[pmsg * maxPlaneComm] ;
          MPI_Wait(&domain.recvRequest[pmsg], &status) ;
-         cudaMemcpyAsync(d_srcAddr, srcAddr, xferFields*opCount*sizeof(Real_t), cudaMemcpyHostToDevice, stream);
          for (Index_t fi=0 ; fi<xferFields; ++fi) {
             Domain_member dest = fieldData[fi] ;
-	    CopyPlane<3><<<(opCount+block-1)/block,block,0,stream>>>(d_srcAddr, &(domain.*dest)(0), opCount, dx, dy, dz);
-            d_srcAddr += opCount ;
+            for (Index_t i=0; i<dz; ++i) {
+               for (Index_t j=0; j<dx; ++j) {
+                  (domain.*dest)(dx*(dy - 1) + i*dx*dy + j) = srcAddr[i*dx + j] ;
+               }
+            }
+            srcAddr += opCount ;
          }
          ++pmsg ;
       }
    }
+
    if (colMin | colMax) {
       /* ASSUMING ONE DOMAIN PER RANK, CONSTANT BLOCK SIZE HERE */
       Index_t opCount = dy * dz ;
 
       if (colMin && doRecv) {
          /* contiguous memory */
-	 stream = streams[s++];
          srcAddr = &domain.commDataRecv[pmsg * maxPlaneComm] ;
-         d_srcAddr = &domain.d_commDataRecv[pmsg * maxPlaneComm] ;
          MPI_Wait(&domain.recvRequest[pmsg], &status) ;
-         cudaMemcpyAsync(d_srcAddr, srcAddr, xferFields*opCount*sizeof(Real_t), cudaMemcpyHostToDevice, stream);
          for (Index_t fi=0 ; fi<xferFields; ++fi) {
             Domain_member dest = fieldData[fi] ;
-	    CopyPlane<4><<<(opCount+block-1)/block,block,0,stream>>>(d_srcAddr, &(domain.*dest)(0), opCount, dx, dy, dz);
-            d_srcAddr += opCount ;
+            for (Index_t i=0; i<dz; ++i) {
+               for (Index_t j=0; j<dy; ++j) {
+                  (domain.*dest)(i*dx*dy + j*dx) = srcAddr[i*dy + j] ;
+               }
+            }
+            srcAddr += opCount ;
          }
          ++pmsg ;
       }
       if (colMax) {
          /* contiguous memory */
-	 stream = streams[s++];
          srcAddr = &domain.commDataRecv[pmsg * maxPlaneComm] ;
-         d_srcAddr = &domain.d_commDataRecv[pmsg * maxPlaneComm] ;
          MPI_Wait(&domain.recvRequest[pmsg], &status) ;
-         cudaMemcpyAsync(d_srcAddr, srcAddr, xferFields*opCount*sizeof(Real_t), cudaMemcpyHostToDevice, stream);
          for (Index_t fi=0 ; fi<xferFields; ++fi) {
             Domain_member dest = fieldData[fi] ;
-	    CopyPlane<5><<<(opCount+block-1)/block,block,0,stream>>>(d_srcAddr, &(domain.*dest)(0), opCount, dx, dy, dz);
-            d_srcAddr += opCount ;
+            for (Index_t i=0; i<dz; ++i) {
+               for (Index_t j=0; j<dy; ++j) {
+                  (domain.*dest)(dx - 1 + i*dx*dy + j*dx) = srcAddr[i*dy + j] ;
+               }
+            }
+            srcAddr += opCount ;
          }
          ++pmsg ;
       }
    }
 
    if (rowMin && colMin && doRecv) {
-      stream = streams[s++];
       srcAddr = &domain.commDataRecv[pmsg * maxPlaneComm +
                                        emsg * maxEdgeComm] ;
-      d_srcAddr = &domain.d_commDataRecv[pmsg * maxPlaneComm +
-                                       emsg * maxEdgeComm] ;
       MPI_Wait(&domain.recvRequest[pmsg+emsg], &status) ;
-      cudaMemcpyAsync(d_srcAddr, srcAddr, xferFields*dz*sizeof(Real_t), cudaMemcpyHostToDevice, stream);
       for (Index_t fi=0 ; fi<xferFields; ++fi) {
          Domain_member dest = fieldData[fi] ;
-	 CopyEdge<0><<<(dz+block-1)/block,block,0,stream>>>(d_srcAddr, &(domain.*dest)(0), dz, dx, dy, dz);
-         d_srcAddr += dz ;
+         for (Index_t i=0; i<dz; ++i) {
+            (domain.*dest)(i*dx*dy) = srcAddr[i] ;
+         }
+         srcAddr += dz ;
       }
       ++emsg ;
    }
 
    if (rowMin && planeMin && doRecv) {
-      stream = streams[s++];
       srcAddr = &domain.commDataRecv[pmsg * maxPlaneComm +
                                        emsg * maxEdgeComm] ;
-      d_srcAddr = &domain.d_commDataRecv[pmsg * maxPlaneComm +
-                                       emsg * maxEdgeComm] ;
       MPI_Wait(&domain.recvRequest[pmsg+emsg], &status) ;
-      cudaMemcpyAsync(d_srcAddr, srcAddr, xferFields*dx*sizeof(Real_t), cudaMemcpyHostToDevice, stream);
       for (Index_t fi=0 ; fi<xferFields; ++fi) {
          Domain_member dest = fieldData[fi] ;
-	 CopyEdge<1><<<(dx+block-1)/block,block,0,stream>>>(d_srcAddr, &(domain.*dest)(0), dx, dx, dy, dz);
-         d_srcAddr += dx ;
+         for (Index_t i=0; i<dx; ++i) {
+            (domain.*dest)(i) = srcAddr[i] ;
+         }
+         srcAddr += dx ;
       }
       ++emsg ;
    }
 
    if (colMin && planeMin && doRecv) {
-      stream = streams[s++];
       srcAddr = &domain.commDataRecv[pmsg * maxPlaneComm +
                                        emsg * maxEdgeComm] ;
-      d_srcAddr = &domain.d_commDataRecv[pmsg * maxPlaneComm +
-                                       emsg * maxEdgeComm] ;
       MPI_Wait(&domain.recvRequest[pmsg+emsg], &status) ;
-      cudaMemcpyAsync(d_srcAddr, srcAddr, xferFields*dy*sizeof(Real_t), cudaMemcpyHostToDevice, stream);
       for (Index_t fi=0 ; fi<xferFields; ++fi) {
          Domain_member dest = fieldData[fi] ;
-	 CopyEdge<2><<<(dy+block-1)/block,block,0,stream>>>(d_srcAddr, &(domain.*dest)(0), dy, dx, dy, dz);
-         d_srcAddr += dy ;
+         for (Index_t i=0; i<dy; ++i) {
+            (domain.*dest)(i*dx) = srcAddr[i] ;
+         }
+         srcAddr += dy ;
       }
       ++emsg ;
    }
 
-   if (rowMax & colMax) {
-      stream = streams[s++];
+   if (rowMax && colMax) {
       srcAddr = &domain.commDataRecv[pmsg * maxPlaneComm +
                                        emsg * maxEdgeComm] ;
-      d_srcAddr = &domain.d_commDataRecv[pmsg * maxPlaneComm +
-                                       emsg * maxEdgeComm] ;
       MPI_Wait(&domain.recvRequest[pmsg+emsg], &status) ;
-      cudaMemcpyAsync(d_srcAddr, srcAddr, xferFields*dz*sizeof(Real_t), cudaMemcpyHostToDevice, stream);
       for (Index_t fi=0 ; fi<xferFields; ++fi) {
          Domain_member dest = fieldData[fi] ;
-	 CopyEdge<3><<<(dz+block-1)/block,block,0,stream>>>(d_srcAddr, &(domain.*dest)(0), dz, dx, dy, dz);
-         d_srcAddr += dz ;
+         for (Index_t i=0; i<dz; ++i) {
+            (domain.*dest)(dx*dy - 1 + i*dx*dy) = srcAddr[i] ;
+         }
+         srcAddr += dz ;
       }
       ++emsg ;
    }
 
-   if (rowMax & planeMax) {
-      stream = streams[s++];
+   if (rowMax && planeMax) {
       srcAddr = &domain.commDataRecv[pmsg * maxPlaneComm +
                                        emsg * maxEdgeComm] ;
-      d_srcAddr = &domain.d_commDataRecv[pmsg * maxPlaneComm +
-                                       emsg * maxEdgeComm] ;
       MPI_Wait(&domain.recvRequest[pmsg+emsg], &status) ;
-      cudaMemcpyAsync(d_srcAddr, srcAddr, xferFields*dx*sizeof(Real_t), cudaMemcpyHostToDevice, stream);
       for (Index_t fi=0 ; fi<xferFields; ++fi) {
          Domain_member dest = fieldData[fi] ;
-	 CopyEdge<4><<<(dx+block-1)/block,block,0,stream>>>(d_srcAddr, &(domain.*dest)(0), dx, dx, dy, dz);
-         d_srcAddr += dx ;
+         for (Index_t i=0; i<dx; ++i) {
+            (domain.*dest)(dx*(dy-1) + dx*dy*(dz-1) + i) = srcAddr[i] ;
+         }
+         srcAddr += dx ;
       }
       ++emsg ;
    }
 
-   if (colMax & planeMax) {
-      stream = streams[s++];
+   if (colMax && planeMax) {
       srcAddr = &domain.commDataRecv[pmsg * maxPlaneComm +
                                        emsg * maxEdgeComm] ;
-      d_srcAddr = &domain.d_commDataRecv[pmsg * maxPlaneComm +
-                                       emsg * maxEdgeComm] ;
       MPI_Wait(&domain.recvRequest[pmsg+emsg], &status) ;
-      cudaMemcpyAsync(d_srcAddr, srcAddr, xferFields*dy*sizeof(Real_t), cudaMemcpyHostToDevice, stream);
       for (Index_t fi=0 ; fi<xferFields; ++fi) {
          Domain_member dest = fieldData[fi] ;
-	 CopyEdge<5><<<(dy+block-1)/block,block,0,stream>>>(d_srcAddr, &(domain.*dest)(0), dy, dx, dy, dz);
-         d_srcAddr += dy ;
+         for (Index_t i=0; i<dy; ++i) {
+            (domain.*dest)(dx*dy*(dz-1) + dx - 1 + i*dx) = srcAddr[i] ;
+         }
+         srcAddr += dy ;
       }
       ++emsg ;
    }
 
-   if (rowMax & colMin) {
-      stream = streams[s++];
+   if (rowMax && colMin) {
       srcAddr = &domain.commDataRecv[pmsg * maxPlaneComm +
                                        emsg * maxEdgeComm] ;
-      d_srcAddr = &domain.d_commDataRecv[pmsg * maxPlaneComm +
-                                       emsg * maxEdgeComm] ;
       MPI_Wait(&domain.recvRequest[pmsg+emsg], &status) ;
-      cudaMemcpyAsync(d_srcAddr, srcAddr, xferFields*dz*sizeof(Real_t), cudaMemcpyHostToDevice, stream);
       for (Index_t fi=0 ; fi<xferFields; ++fi) {
          Domain_member dest = fieldData[fi] ;
-	 CopyEdge<6><<<(dz+block-1)/block,block,0,stream>>>(d_srcAddr, &(domain.*dest)(0), dz, dx, dy, dz);
-         d_srcAddr += dz ;
+         for (Index_t i=0; i<dz; ++i) {
+            (domain.*dest)(dx*(dy-1) + i*dx*dy) = srcAddr[i] ;
+         }
+         srcAddr += dz ;
       }
       ++emsg ;
    }
 
-   if (rowMin & planeMax) {
-      stream = streams[s++];
+   if (rowMin && planeMax) {
       srcAddr = &domain.commDataRecv[pmsg * maxPlaneComm +
                                        emsg * maxEdgeComm] ;
-      d_srcAddr = &domain.d_commDataRecv[pmsg * maxPlaneComm +
-                                       emsg * maxEdgeComm] ;
       MPI_Wait(&domain.recvRequest[pmsg+emsg], &status) ;
-      cudaMemcpyAsync(d_srcAddr, srcAddr, xferFields*dx*sizeof(Real_t), cudaMemcpyHostToDevice, stream);
       for (Index_t fi=0 ; fi<xferFields; ++fi) {
          Domain_member dest = fieldData[fi] ;
-	 CopyEdge<7><<<(dx+block-1)/block,block,0,stream>>>(d_srcAddr, &(domain.*dest)(0), dx, dx, dy, dz);
-         d_srcAddr += dx ;
+         for (Index_t i=0; i<dx; ++i) {
+            (domain.*dest)(dx*dy*(dz-1) + i) = srcAddr[i] ;
+         }
+         srcAddr += dx ;
       }
       ++emsg ;
    }
 
-   if (colMin & planeMax) {
-      stream = streams[s++];
+   if (colMin && planeMax) {
       srcAddr = &domain.commDataRecv[pmsg * maxPlaneComm +
                                        emsg * maxEdgeComm] ;
-      d_srcAddr = &domain.d_commDataRecv[pmsg * maxPlaneComm +
-                                       emsg * maxEdgeComm] ;
       MPI_Wait(&domain.recvRequest[pmsg+emsg], &status) ;
-      cudaMemcpyAsync(d_srcAddr, srcAddr, xferFields*dy*sizeof(Real_t), cudaMemcpyHostToDevice, stream);
       for (Index_t fi=0 ; fi<xferFields; ++fi) {
          Domain_member dest = fieldData[fi] ;
-	 CopyEdge<8><<<(dy+block-1)/block,block,0,stream>>>(d_srcAddr, &(domain.*dest)(0), dy, dx, dy, dz);
-         d_srcAddr += dy ;
+         for (Index_t i=0; i<dy; ++i) {
+            (domain.*dest)(dx*dy*(dz-1) + i*dx) = srcAddr[i] ;
+         }
+         srcAddr += dy ;
       }
       ++emsg ;
    }
 
    if (rowMin && colMax && doRecv) {
-      stream = streams[s++];
       srcAddr = &domain.commDataRecv[pmsg * maxPlaneComm +
                                        emsg * maxEdgeComm] ;
-      d_srcAddr = &domain.d_commDataRecv[pmsg * maxPlaneComm +
-                                       emsg * maxEdgeComm] ;
       MPI_Wait(&domain.recvRequest[pmsg+emsg], &status) ;
-      cudaMemcpyAsync(d_srcAddr, srcAddr, xferFields*dz*sizeof(Real_t), cudaMemcpyHostToDevice, stream);
       for (Index_t fi=0 ; fi<xferFields; ++fi) {
          Domain_member dest = fieldData[fi] ;
-	 CopyEdge<9><<<(dz+block-1)/block,block,0,stream>>>(d_srcAddr, &(domain.*dest)(0), dz, dx, dy, dz);
-         d_srcAddr += dz ;
+         for (Index_t i=0; i<dz; ++i) {
+            (domain.*dest)(dx - 1 + i*dx*dy) = srcAddr[i] ;
+         }
+         srcAddr += dz ;
       }
       ++emsg ;
    }
 
    if (rowMax && planeMin && doRecv) {
-      stream = streams[s++];
       srcAddr = &domain.commDataRecv[pmsg * maxPlaneComm +
                                        emsg * maxEdgeComm] ;
-      d_srcAddr = &domain.d_commDataRecv[pmsg * maxPlaneComm +
-                                       emsg * maxEdgeComm] ;
       MPI_Wait(&domain.recvRequest[pmsg+emsg], &status) ;
-      cudaMemcpyAsync(d_srcAddr, srcAddr, xferFields*dx*sizeof(Real_t), cudaMemcpyHostToDevice, stream);
       for (Index_t fi=0 ; fi<xferFields; ++fi) {
          Domain_member dest = fieldData[fi] ;
-	 CopyEdge<10><<<(dx+block-1)/block,block,0,stream>>>(d_srcAddr, &(domain.*dest)(0), dx, dx, dy, dz);
-         d_srcAddr += dx ;
+         for (Index_t i=0; i<dx; ++i) {
+            (domain.*dest)(dx*(dy - 1) + i) = srcAddr[i] ;
+         }
+         srcAddr += dx ;
       }
       ++emsg ;
    }
 
    if (colMax && planeMin && doRecv) {
-      stream = streams[s++];
       srcAddr = &domain.commDataRecv[pmsg * maxPlaneComm +
                                        emsg * maxEdgeComm] ;
-      d_srcAddr = &domain.d_commDataRecv[pmsg * maxPlaneComm +
-                                       emsg * maxEdgeComm] ;
       MPI_Wait(&domain.recvRequest[pmsg+emsg], &status) ;
-      cudaMemcpyAsync(d_srcAddr, srcAddr, xferFields*dy*sizeof(Real_t), cudaMemcpyHostToDevice, stream);
       for (Index_t fi=0 ; fi<xferFields; ++fi) {
          Domain_member dest = fieldData[fi] ;
-	 CopyEdge<11><<<(dy+block-1)/block,block,0,stream>>>(d_srcAddr, &(domain.*dest)(0), dy, dx, dy, dz);
-         d_srcAddr += dy ;
+         for (Index_t i=0; i<dy; ++i) {
+            (domain.*dest)(dx - 1 + i*dx) = srcAddr[i] ;
+         }
+         srcAddr += dy ;
       }
       ++emsg ;
    }
 
-   if (rowMin & colMin & planeMin & doRecv) {
-      stream = streams[s++];
+
+   if (rowMin && colMin && planeMin && doRecv) {
       /* corner at domain logical coord (0, 0, 0) */
       Real_t *comBuf = &domain.commDataRecv[pmsg * maxPlaneComm +
                                              emsg * maxEdgeComm +
                                       cmsg * CACHE_COHERENCE_PAD_REAL] ;
       MPI_Wait(&domain.recvRequest[pmsg+emsg+cmsg], &status) ;
       for (Index_t fi=0; fi<xferFields; ++fi) {
-         CopyCorner<<<1,1,0,stream>>>(&(domain.*fieldData[fi])(0), comBuf[fi]) ;
+         (domain.*fieldData[fi])(0) = comBuf[fi] ;
       }
       ++cmsg ;
    }
-   if (rowMin & colMin & planeMax) {
-      stream = streams[s++];
+   if (rowMin && colMin && planeMax) {
       /* corner at domain logical coord (0, 0, 1) */
       Real_t *comBuf = &domain.commDataRecv[pmsg * maxPlaneComm +
                                              emsg * maxEdgeComm +
@@ -1793,12 +1604,11 @@ void CommSyncPosVelGpu(Domain& domain, cudaStream_t *streams) {
       Index_t idx = dx*dy*(dz - 1) ;
       MPI_Wait(&domain.recvRequest[pmsg+emsg+cmsg], &status) ;
       for (Index_t fi=0; fi<xferFields; ++fi) {
-         CopyCorner<<<1,1,0,stream>>>(&(domain.*fieldData[fi])(idx), comBuf[fi]) ;
+         (domain.*fieldData[fi])(idx) = comBuf[fi] ;
       }
       ++cmsg ;
    }
-   if (rowMin & colMax & planeMin & doRecv) {
-      stream = streams[s++];
+   if (rowMin && colMax && planeMin && doRecv) {
       /* corner at domain logical coord (1, 0, 0) */
       Real_t *comBuf = &domain.commDataRecv[pmsg * maxPlaneComm +
                                              emsg * maxEdgeComm +
@@ -1806,12 +1616,11 @@ void CommSyncPosVelGpu(Domain& domain, cudaStream_t *streams) {
       Index_t idx = dx - 1 ;
       MPI_Wait(&domain.recvRequest[pmsg+emsg+cmsg], &status) ;
       for (Index_t fi=0; fi<xferFields; ++fi) {
-         CopyCorner<<<1,1,0,stream>>>(&(domain.*fieldData[fi])(idx), comBuf[fi]) ;
+         (domain.*fieldData[fi])(idx) = comBuf[fi] ;
       }
       ++cmsg ;
    }
-   if (rowMin & colMax & planeMax) {
-      stream = streams[s++];
+   if (rowMin && colMax && planeMax) {
       /* corner at domain logical coord (1, 0, 1) */
       Real_t *comBuf = &domain.commDataRecv[pmsg * maxPlaneComm +
                                              emsg * maxEdgeComm +
@@ -1819,12 +1628,11 @@ void CommSyncPosVelGpu(Domain& domain, cudaStream_t *streams) {
       Index_t idx = dx*dy*(dz - 1) + (dx - 1) ;
       MPI_Wait(&domain.recvRequest[pmsg+emsg+cmsg], &status) ;
       for (Index_t fi=0; fi<xferFields; ++fi) {
-         CopyCorner<<<1,1,0,stream>>>(&(domain.*fieldData[fi])(idx), comBuf[fi]) ;
+         (domain.*fieldData[fi])(idx) = comBuf[fi] ;
       }
       ++cmsg ;
    }
-   if (rowMax & colMin & planeMin & doRecv) {
-      stream = streams[s++];
+   if (rowMax && colMin && planeMin && doRecv) {
       /* corner at domain logical coord (0, 1, 0) */
       Real_t *comBuf = &domain.commDataRecv[pmsg * maxPlaneComm +
                                              emsg * maxEdgeComm +
@@ -1832,12 +1640,11 @@ void CommSyncPosVelGpu(Domain& domain, cudaStream_t *streams) {
       Index_t idx = dx*(dy - 1) ;
       MPI_Wait(&domain.recvRequest[pmsg+emsg+cmsg], &status) ;
       for (Index_t fi=0; fi<xferFields; ++fi) {
-         CopyCorner<<<1,1,0,stream>>>(&(domain.*fieldData[fi])(idx), comBuf[fi]) ;
+         (domain.*fieldData[fi])(idx) = comBuf[fi] ;
       }
       ++cmsg ;
    }
-   if (rowMax & colMin & planeMax) {
-      stream = streams[s++];
+   if (rowMax && colMin && planeMax) {
       /* corner at domain logical coord (0, 1, 1) */
       Real_t *comBuf = &domain.commDataRecv[pmsg * maxPlaneComm +
                                              emsg * maxEdgeComm +
@@ -1845,12 +1652,11 @@ void CommSyncPosVelGpu(Domain& domain, cudaStream_t *streams) {
       Index_t idx = dx*dy*(dz - 1) + dx*(dy - 1) ;
       MPI_Wait(&domain.recvRequest[pmsg+emsg+cmsg], &status) ;
       for (Index_t fi=0; fi<xferFields; ++fi) {
-         CopyCorner<<<1,1,0,stream>>>(&(domain.*fieldData[fi])(idx), comBuf[fi]) ;
+         (domain.*fieldData[fi])(idx) = comBuf[fi] ;
       }
       ++cmsg ;
    }
-   if (rowMax & colMax & planeMin & doRecv) {
-      stream = streams[s++];
+   if (rowMax && colMax && planeMin && doRecv) {
       /* corner at domain logical coord (1, 1, 0) */
       Real_t *comBuf = &domain.commDataRecv[pmsg * maxPlaneComm +
                                              emsg * maxEdgeComm +
@@ -1858,12 +1664,11 @@ void CommSyncPosVelGpu(Domain& domain, cudaStream_t *streams) {
       Index_t idx = dx*dy - 1 ;
       MPI_Wait(&domain.recvRequest[pmsg+emsg+cmsg], &status) ;
       for (Index_t fi=0; fi<xferFields; ++fi) {
-         CopyCorner<<<1,1,0,stream>>>(&(domain.*fieldData[fi])(idx), comBuf[fi]) ;
+         (domain.*fieldData[fi])(idx) = comBuf[fi] ;
       }
       ++cmsg ;
    }
-   if (rowMax & colMax & planeMax) {
-      stream = streams[s++];
+   if (rowMax && colMax && planeMax) {
       /* corner at domain logical coord (1, 1, 1) */
       Real_t *comBuf = &domain.commDataRecv[pmsg * maxPlaneComm +
                                              emsg * maxEdgeComm +
@@ -1871,18 +1676,15 @@ void CommSyncPosVelGpu(Domain& domain, cudaStream_t *streams) {
       Index_t idx = dx*dy*dz - 1 ;
       MPI_Wait(&domain.recvRequest[pmsg+emsg+cmsg], &status) ;
       for (Index_t fi=0; fi<xferFields; ++fi) {
-         CopyCorner<<<1,1,0,stream>>>(&(domain.*fieldData[fi])(idx), comBuf[fi]) ;
+         (domain.*fieldData[fi])(idx) = comBuf[fi] ;
       }
       ++cmsg ;
    }
-
-   // don't need to call synchronize since it will be done automatically 
-   // before kernels start to execute in NULL stream
 }
 
 /******************************************/
 
-void CommMonoQGpu(Domain& domain, cudaStream_t stream)
+void CommMonoQ(Domain& domain)
 {
    if (domain.numRanks() == 1)
       return ;
@@ -1931,6 +1733,7 @@ void CommMonoQGpu(Domain& domain, cudaStream_t stream)
    fieldOffset[1] = domain.numElem ;
    fieldOffset[2] = domain.numElem ;
 
+
    MPI_Comm_rank(MPI_COMM_WORLD, &myRank) ;
 
    if (planeMin | planeMax) {
@@ -1943,7 +1746,9 @@ void CommMonoQGpu(Domain& domain, cudaStream_t stream)
          MPI_Wait(&domain.recvRequest[pmsg], &status) ;
          for (Index_t fi=0 ; fi<xferFields; ++fi) {
             Domain_member dest = fieldData[fi] ;
-            cudaMemcpyAsync(&(domain.*dest)(fieldOffset[fi]), srcAddr, opCount*sizeof(Real_t), cudaMemcpyHostToDevice, stream);
+            for (Index_t i=0; i<opCount; ++i) {
+               (domain.*dest)(fieldOffset[fi] + i) = srcAddr[i] ;
+            }
             srcAddr += opCount ;
             fieldOffset[fi] += opCount ;
          }
@@ -1955,7 +1760,9 @@ void CommMonoQGpu(Domain& domain, cudaStream_t stream)
          MPI_Wait(&domain.recvRequest[pmsg], &status) ;
          for (Index_t fi=0 ; fi<xferFields; ++fi) {
             Domain_member dest = fieldData[fi] ;
-            cudaMemcpyAsync(&(domain.*dest)(fieldOffset[fi]), srcAddr, opCount*sizeof(Real_t), cudaMemcpyHostToDevice, stream);
+            for (Index_t i=0; i<opCount; ++i) {
+               (domain.*dest)(fieldOffset[fi] + i) = srcAddr[i] ;
+            }
             srcAddr += opCount ;
             fieldOffset[fi] += opCount ;
          }
@@ -1973,7 +1780,9 @@ void CommMonoQGpu(Domain& domain, cudaStream_t stream)
          MPI_Wait(&domain.recvRequest[pmsg], &status) ;
          for (Index_t fi=0 ; fi<xferFields; ++fi) {
             Domain_member dest = fieldData[fi] ;
-            cudaMemcpyAsync(&(domain.*dest)(fieldOffset[fi]), srcAddr, opCount*sizeof(Real_t), cudaMemcpyHostToDevice, stream);
+            for (Index_t i=0; i<opCount; ++i) {
+               (domain.*dest)(fieldOffset[fi] + i) = srcAddr[i] ;
+            }
             srcAddr += opCount ;
             fieldOffset[fi] += opCount ;
          }
@@ -1985,7 +1794,9 @@ void CommMonoQGpu(Domain& domain, cudaStream_t stream)
          MPI_Wait(&domain.recvRequest[pmsg], &status) ;
          for (Index_t fi=0 ; fi<xferFields; ++fi) {
             Domain_member dest = fieldData[fi] ;
-            cudaMemcpyAsync(&(domain.*dest)(fieldOffset[fi]), srcAddr, opCount*sizeof(Real_t), cudaMemcpyHostToDevice, stream);
+            for (Index_t i=0; i<opCount; ++i) {
+               (domain.*dest)(fieldOffset[fi] + i) = srcAddr[i] ;
+            }
             srcAddr += opCount ;
             fieldOffset[fi] += opCount ;
          }
@@ -2002,7 +1813,9 @@ void CommMonoQGpu(Domain& domain, cudaStream_t stream)
          MPI_Wait(&domain.recvRequest[pmsg], &status) ;
          for (Index_t fi=0 ; fi<xferFields; ++fi) {
             Domain_member dest = fieldData[fi] ;
-            cudaMemcpyAsync(&(domain.*dest)(fieldOffset[fi]), srcAddr, opCount*sizeof(Real_t), cudaMemcpyHostToDevice, stream);
+            for (Index_t i=0; i<opCount; ++i) {
+               (domain.*dest)(fieldOffset[fi] + i) = srcAddr[i] ;
+            }
             srcAddr += opCount ;
             fieldOffset[fi] += opCount ;
          }
@@ -2014,15 +1827,14 @@ void CommMonoQGpu(Domain& domain, cudaStream_t stream)
          MPI_Wait(&domain.recvRequest[pmsg], &status) ;
          for (Index_t fi=0 ; fi<xferFields; ++fi) {
             Domain_member dest = fieldData[fi] ;
-            cudaMemcpyAsync(&(domain.*dest)(fieldOffset[fi]), srcAddr, opCount*sizeof(Real_t), cudaMemcpyHostToDevice, stream);
+            for (Index_t i=0; i<opCount; ++i) {
+               (domain.*dest)(fieldOffset[fi] + i) = srcAddr[i] ;
+            }
             srcAddr += opCount ;
          }
          ++pmsg ;
       }
    }
-
-   // don't need to call synchronize since it will be done automatically 
-   // before kernels start to execute in NULL stream
 }
 
 #endif
