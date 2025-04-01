@@ -400,6 +400,9 @@ void LagrangeLeapFrog(Domain* domain);
 void LagrangeNodal(Domain* domain);
 void LagrangeElements(Domain* domain);
 
+void ApplyMaterialPropertiesAndUpdateVolume(Domain *domain);
+void CalcPositionAndVelocityForNodes(const Real_t u_cut, Domain* domain);
+void CalcVolumeForceForElems(const Real_t hgcoef,Domain *domain);
 // Initialization and setup functions
 Domain *NewDomain(char* argv[], Int_t numRanks, Index_t colLoc,
                Index_t rowLoc, Index_t planeLoc,
@@ -407,5 +410,6 @@ Domain *NewDomain(char* argv[], Int_t numRanks, Index_t colLoc,
 void InitMeshDecomp(Int_t numRanks, Int_t myRank, Int_t *col, Int_t *row, Int_t *plane, Int_t *side);
 void printUsage(char *argv[]);
 void cuda_init(Int_t device);
+void CalcKinematicsAndMonotonicQGradient(Domain *domain);
 
 #endif // LULESH_H
