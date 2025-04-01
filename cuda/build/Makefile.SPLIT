@@ -21,11 +21,11 @@ lulesh: allocator.o lulesh_main.o lulesh_compute.o
 allocator.o: ../src/allocator.cu ../src/vector.h
 	$(NVCC) $(FLAGS) ../src/allocator.cu -I../src/ -c -o allocator.o
 
-lulesh_compute.o: ../src/lulesh_compute.cu ../src/lulesh_split.h ../src/util.h ../src/vector.h ../src/allocator.h
-	$(NVCC) $(FLAGS) ../src/lulesh_compute.cu -I../src/ -DUSE_CUDA -DNO_MPI -c -o lulesh_compute.o
+lulesh_compute.o: ../src/split/lulesh_compute.cu ../src/split/lulesh_split.h ../src/util.h ../src/vector.h ../src/allocator.h ../src/split/lulesh_kernels.h
+	$(NVCC) $(FLAGS) ../src/split/lulesh_compute.cu -I../src/ -I../src/split/ -DUSE_CUDA -DNO_MPI -c -o lulesh_compute.o
 
-lulesh_main.o: ../src/lulesh_main.cu ../src/lulesh_split.h ../src/util.h ../src/vector.h ../src/allocator.h
-	$(NVCC) $(FLAGS) ../src/lulesh_main.cu -I../src/ -DUSE_CUDA -DNO_MPI -c -o lulesh_main.o
+lulesh_main.o: ../src/split/lulesh_main.cu ../src/split/lulesh_split.h ../src/util.h ../src/vector.h ../src/allocator.h
+	$(NVCC) $(FLAGS) ../src/split/lulesh_main.cu -I../src/ -I../src/split/ -DUSE_CUDA -DNO_MPI -c -o lulesh_main.o
 
 
 clean: 
