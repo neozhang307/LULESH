@@ -21,20 +21,20 @@ lulesh: allocator.o lulesh_main.o lulesh_compute.o lulesh_compute_comm.o lulesh_
 allocator.o: ../src/utility/allocator.cu ../src/utility/vector.h
 	$(NVCC) $(FLAGS) ../src/utility/allocator.cu -I../src/ -I../src/utility/ -c -o allocator.o
 
-lulesh_compute.o: ../src/split/lulesh_compute.cu ../src/split/lulesh_split.h ../src/utility/util.h ../src/utility/vector.h ../src/utility/allocator.h ../src/split/lulesh_kernels.h
+lulesh_compute.o: ../src/split/lulesh_compute.cu  ../src/utility/util.h ../src/utility/vector.h ../src/utility/allocator.h ../src/split/lulesh_kernels.h
 	$(NVCC) $(FLAGS) ../src/split/lulesh_compute.cu -I../src/ -I../src/split/ -I../src/utility/ -DUSE_CUDA -DNO_MPI -c -o lulesh_compute.o
 
-lulesh_compute_comm.o: ../src/split/lulesh_compute_comm.cu ../src/split/lulesh_split.h ../src/utility/util.h ../src/utility/vector.h ../src/utility/allocator.h ../src/split/lulesh_kernels.h
+lulesh_compute_comm.o: ../src/split/lulesh_compute_comm.cu  ../src/utility/util.h ../src/utility/vector.h ../src/utility/allocator.h ../src/split/lulesh_kernels.h
 	$(NVCC) $(FLAGS) ../src/split/lulesh_compute_comm.cu -I../src/ -I../src/split/ -I../src/utility/ -DUSE_CUDA -DNO_MPI -c -o lulesh_compute_comm.o
 
-lulesh_main.o: ../src/split/lulesh_main.cu ../src/split/lulesh_split.h ../src/utility/util.h ../src/utility/vector.h ../src/utility/allocator.h
+lulesh_main.o: ../src/split/lulesh_main.cu  ../src/utility/util.h ../src/utility/vector.h ../src/utility/allocator.h
 	$(NVCC) $(FLAGS) ../src/split/lulesh_main.cu -I../src/ -I../src/split/ -I../src/utility/ -DUSE_CUDA -DNO_MPI -c -o lulesh_main.o
 
-lulesh_comms.o: ../src/communication/lulesh-comms.cu ../src/utility/lulesh.h
-	$(NVCC) $(FLAGS) ../src/communication/lulesh-comms.cu -I../src/ -I../src/split/ -I../src/communication/ -I../src/utility/ -DUSE_CUDA -DNO_MPI -c -o lulesh_comms.o
+lulesh_comms.o: ../src/split/lulesh-comms.cu 
+	$(NVCC) $(FLAGS) ../src/split/lulesh-comms.cu -I../src/ -I../src/split/ -I../src/split/ -I../src/utility/ -DUSE_CUDA -DNO_MPI -c -o lulesh_comms.o
 
-lulesh_comms_gpu.o: ../src/communication/lulesh-comms-gpu.cu ../src/utility/lulesh.h
-	$(NVCC) $(FLAGS) ../src/communication/lulesh-comms-gpu.cu -I../src/ -I../src/split/ -I../src/communication/ -I../src/utility/ -DUSE_CUDA -DNO_MPI -c -o lulesh_comms_gpu.o
+lulesh_comms_gpu.o: ../src/split/lulesh-comms-gpu.cu 
+	$(NVCC) $(FLAGS) ../src/split/lulesh-comms-gpu.cu -I../src/ -I../src/split/ -I../src/split/ -I../src/utility/ -DUSE_CUDA -DNO_MPI -c -o lulesh_comms_gpu.o
 
 clean: 
 	rm -rf allocator.o lulesh_main.o lulesh_compute.o lulesh_compute_comm.o lulesh_comms.o lulesh_comms_gpu.o lulesh xyz.asc regNumList.txt
