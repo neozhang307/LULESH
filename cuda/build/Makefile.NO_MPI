@@ -18,11 +18,11 @@ debug: lulesh
 lulesh: allocator.o lulesh.o
 	$(NVCC) $(LINKFLAGS) allocator.o lulesh.o -o lulesh
 
-allocator.o: ../src/allocator.cu ../src/vector.h
-	$(NVCC) $(FLAGS) ../src/allocator.cu -I../src/ -c -o allocator.o
+allocator.o: ../src/utility/allocator.cu ../src/utility/vector.h
+	$(NVCC) $(FLAGS) ../src/utility/allocator.cu -I../src/ -I../src/utility/ -c -o allocator.o
 
-lulesh.o: ../src/lulesh.cu ../src/util.h ../src/vector.h ../src/allocator.h
-	$(NVCC) $(FLAGS) ../src/lulesh.cu -I../src/ -DUSE_CUDA -DNO_MPI -c -o lulesh.o
+lulesh.o: ../src/lulesh.cu ../src/utility/util.h ../src/utility/vector.h ../src/utility/allocator.h
+	$(NVCC) $(FLAGS) ../src/lulesh.cu -I../src/ -I../src/utility/ -DUSE_CUDA -DNO_MPI -c -o lulesh.o
 
 clean: 
 	rm -rf allocator.o lulesh.o lulesh xyz.asc regNumList.txt
