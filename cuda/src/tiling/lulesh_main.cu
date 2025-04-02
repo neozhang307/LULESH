@@ -289,18 +289,11 @@ int main(int argc, char *argv[])
   Int_t numRanks ;
   Int_t myRank ;
 
-#if USE_MPI   
-  Domain_member fieldData ;
 
-  // Initialize MPI and get process info
-  MPI_Init(&argc, &argv) ;
-  MPI_Comm_size(MPI_COMM_WORLD, &numRanks) ;  // Total number of processes
-  MPI_Comm_rank(MPI_COMM_WORLD, &myRank) ;    // Current process ID
-#else
   // For non-MPI builds, single process
   numRanks = 1;
   myRank = 0;
-#endif
+
 
   // Initialize CUDA environment for this MPI rank
   cuda_init(myRank);
@@ -370,7 +363,8 @@ int main(int argc, char *argv[])
   int its=0;
 
   // Print simulation parameters (only from rank 0)
-  if (myRank == 0) {
+  // if (myRank == 0) 
+  {
     if (structured)
       printf("Running until t=%f, Problem size=%dx%dx%d\n",baseDom->stoptime,nx,nx,nx);
     else 
@@ -442,10 +436,6 @@ int main(int argc, char *argv[])
   // Reset CUDA device to clean state
   cudaDeviceReset();
 
-#if USE_MPI
-   // Finalize MPI
-   MPI_Finalize() ;
-#endif
 
   return 0 ;
 }
