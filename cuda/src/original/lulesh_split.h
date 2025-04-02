@@ -1,7 +1,7 @@
 #ifndef LULESH_H
 #define LULESH_H
 
-#include "utility/vector.h"
+#include "vector.h"
 #include <cuda.h>
 #include <cuda_runtime.h>
 

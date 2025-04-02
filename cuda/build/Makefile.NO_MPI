@@ -15,14 +15,23 @@ debug: 		FLAGS += $(DFLAGS)
 release: lulesh
 debug: lulesh
 
-lulesh: allocator.o lulesh.o
-	$(NVCC) $(LINKFLAGS) allocator.o lulesh.o -o lulesh
+lulesh: allocator.o lulesh_main.o lulesh_compute.o lulesh_comms.o lulesh_comms_gpu.o
+	$(NVCC) $(LINKFLAGS) allocator.o lulesh_main.o lulesh_compute.o lulesh_comms.o lulesh_comms_gpu.o -o lulesh
 
-allocator.o: ../src/utility/allocator.cu ../src/utility/vector.h
-	$(NVCC) $(FLAGS) ../src/utility/allocator.cu -I../src/ -I../src/utility/ -c -o allocator.o
+allocator.o: ../src/original/allocator.cu ../src/original/vector.h
+	$(NVCC) $(FLAGS) ../src/original/allocator.cu -I../src/original/ -c -o allocator.o
 
-lulesh.o: ../src/lulesh.cu ../src/utility/util.h ../src/utility/vector.h ../src/utility/allocator.h
-	$(NVCC) $(FLAGS) ../src/lulesh.cu -I../src/ -I../src/utility/ -DUSE_CUDA -DNO_MPI -c -o lulesh.o
+lulesh_main.o: ../src/original/lulesh_main.cu ../src/original/util.h ../src/original/vector.h ../src/original/allocator.h
+	$(NVCC) $(FLAGS) ../src/original/lulesh_main.cu -I../src/original/ -DUSE_CUDA -DNO_MPI -c -o lulesh_main.o
+
+lulesh_compute.o: ../src/original/lulesh_compute.cu  ../src/original/lulesh_kernels.h ../src/original/sm_utils.inl
+	$(NVCC) $(FLAGS) ../src/original/lulesh_compute.cu -I../src/original/ -DUSE_CUDA -DNO_MPI -c -o lulesh_compute.o
+
+lulesh_comms.o: ../src/original/lulesh-comms.cu 
+	$(NVCC) $(FLAGS) ../src/original/lulesh-comms.cu -I../src/original/ -DUSE_CUDA -DNO_MPI -c -o lulesh_comms.o
+
+lulesh_comms_gpu.o: ../src/original/lulesh-comms-gpu.cu 
+	$(NVCC) $(FLAGS) ../src/original/lulesh-comms-gpu.cu -I../src/original/ -DUSE_CUDA -DNO_MPI -c -o lulesh_comms_gpu.o
 
 clean: 
-	rm -rf allocator.o lulesh.o lulesh xyz.asc regNumList.txt
+	rm -rf allocator.o lulesh_main.o lulesh_compute.o lulesh_comms.o lulesh_comms_gpu.o lulesh xyz.asc regNumList.txt

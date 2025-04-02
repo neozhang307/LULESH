@@ -70,10 +70,10 @@ Additional BSD Notice
 #include <sys/time.h>
 #include <unistd.h>
 
-#include <utility/util.h>
-#include <utility/sm_utils.inl>
+#include <util.h>
+#include <sm_utils.inl>
 #include <cuda.h>
-#include <utility/allocator.h>
+#include <allocator.h>
 #include "cuda_profiler_api.h"
 
 #ifdef USE_MPI

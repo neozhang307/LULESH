@@ -6,7 +6,7 @@
 #include <string.h>
 #endif
 
-#include "utility/lulesh.h"
+#include "lulesh_split.h"
 
 #if USE_MPI
 /* Comm Routines */

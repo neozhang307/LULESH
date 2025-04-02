@@ -67,9 +67,9 @@ Additional BSD Notice
 #include <cuda.h>
 
 #include "lulesh_split.h"
-#include "utility/util.h"
-#include "utility/sm_utils.inl"
-#include "utility/allocator.h"
+#include "util.h"
+#include "sm_utils.inl"
+#include "allocator.h"
 #include "lulesh_kernels.h"
 // checkErrors function is already defined at line 75
 
