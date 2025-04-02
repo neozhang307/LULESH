@@ -153,10 +153,10 @@ void LagrangeNodal(Domain *domain)
   // Send position and velocity data directly from GPU to other processes
   CommSendGpu(*domain, MSG_SYNC_POS_VEL, 6, fieldData,
            domain->sizeX + 1, domain->sizeY + 1, domain->sizeZ + 1,
-           false, false, domain->streams[2]);
+           false, false, domain->streams[1]);
   
   // Complete synchronization of position and velocity data
-  CommSyncPosVelGpu(*domain, &domain->streams[2]);
+  CommSyncPosVelGpu(*domain, &domain->streams[1]);
 #endif
 #endif
 
@@ -190,8 +190,8 @@ void CalcForceForNodes(Domain *domain)
 
   CommSendGpu(*domain, MSG_COMM_SBN, 3, fieldData,
            domain->sizeX + 1, domain->sizeY + 1, domain->sizeZ + 1,
-           true, false, domain->streams[2]) ;
-  CommSBNGpu(*domain, 3, fieldData, &domain->streams[2]) ;
+           true, false, domain->streams[1]) ;
+  CommSBNGpu(*domain, 3, fieldData, &domain->streams[1]) ;
 #endif
 }
 
@@ -267,10 +267,10 @@ void LagrangeElements(Domain *domain)
    // Send velocity gradients directly from GPU to other processes
    CommSendGpu(*domain, MSG_MONOQ, 3, fieldData,
             domain->sizeX, domain->sizeY, domain->sizeZ,
-            true, true, domain->streams[2]);
+            true, true, domain->streams[1]);
    
    // Complete monotonic q communication
-   CommMonoQGpu(*domain, domain->streams[2]);
+   CommMonoQGpu(*domain, domain->streams[1]);
 #endif
 
   // Free temporary arrays no longer needed

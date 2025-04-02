@@ -591,7 +591,7 @@ Domain *NewDomain(char* argv[], Int_t numRanks, Index_t colLoc,
 
   Domain *domain = new Domain ;
 
-  domain->max_streams = 32;
+  domain->max_streams = 2;
   domain->streams.resize(domain->max_streams);
 
   for (Int_t i=0;i<domain->max_streams;i++)
