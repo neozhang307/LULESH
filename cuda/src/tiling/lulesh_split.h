@@ -44,20 +44,7 @@
 #define ZETA_P_FREE 0x10000
 #define ZETA_P_COMM 0x20000
 
-#if USE_MPI
-#include <mpi.h>
-
-/*
-   define one of these three symbols:
-
-   SEDOV_SYNC_POS_VEL_NONE
-   SEDOV_SYNC_POS_VEL_EARLY
-   SEDOV_SYNC_POS_VEL_LATE
-*/
-
-// TODO: currently we support only early sync!
-#define SEDOV_SYNC_POS_VEL_EARLY 1
-#endif
+#define USE_TILING
 
 
 
@@ -86,7 +73,7 @@ class Domain
 public: 
 
   void sortRegions(Vector_h<Int_t>& regReps_h, Vector_h<Index_t>& regSorted_h);
-  void CreateRegionIndexSets(Int_t nr, Int_t balance);
+  void CreateRegionIndexSets(Int_t nr, Int_t balance, Int_t tildID);
 
 
   Index_t max_streams;
@@ -303,17 +290,19 @@ public:
    Index_t m_colMin, m_colMax;
    Index_t m_planeMin, m_planeMax ;
 
-#if USE_MPI   
+#ifdef USE_TILING   
    // Communication Work space 
-   Real_t *commDataSend ;
-   Real_t *commDataRecv ;
+   // In theory don't need CPU side buffer
+  //  Real_t *commDataSend ;
+  //  Real_t *commDataRecv ;
 
-   Real_t *d_commDataSend ;
-   Real_t *d_commDataRecv ;
+   Real_t *d_commDataSendMimic ;
+   Real_t *d_commDataRecvMimic ;
 
    // Maximum number of block neighbors 
-   MPI_Request recvRequest[26] ; // 6 faces + 12 edges + 8 corners 
-   MPI_Request sendRequest[26] ; // 6 faces + 12 edges + 8 corners 
+  //  MPI_Request recvRequest[26] ; // 6 faces + 12 edges + 8 corners 
+  //  MPI_Request sendRequest[26] ; // 6 faces + 12 edges + 8 corners 
+  cudaEvent_t sendEvent[26] ; // 6 faces + 12 edges + 8 corners //check if seding finished
 #endif
 
 };
@@ -349,25 +338,25 @@ static inline void checkErrors(Domain* domain,int its,int myRank)
   }
 }
 // cpu-comms
-void CommRecv(Domain& domain, Int_t msgType, Index_t xferFields,
+void MimicCommRecv(Domain& domain, Int_t msgType, Index_t xferFields,
               Index_t dx, Index_t dy, Index_t dz,
               bool doRecv, bool planeOnly);
-void CommSend(Domain& domain, Int_t msgType,
+void MimicCommSend(Domain& domain, Int_t msgType,
               Index_t xferFields, Domain_member *fieldData,
               Index_t dx, Index_t dy, Index_t dz,
               bool doSend, bool planeOnly);
-void CommSBN(Domain& domain, Int_t xferFields, Domain_member *fieldData);
-void CommSyncPosVel(Domain& domain);
-void CommMonoQ(Domain& domain);
+void MimicCommSBN(Domain& domain, Int_t xferFields, Domain_member *fieldData);
+void MimicCommSyncPosVel(Domain& domain);
+void MimicCommMonoQ(Domain& domain);
 
 // gpu-comms
-void CommSendGpu(Domain& domain, Int_t msgType,
+void MimicCommSendGpu(Domain& domain, Int_t msgType,
               Index_t xferFields, Domain_member *fieldData,
               Index_t dx, Index_t dy, Index_t dz,
               bool doSend, bool planeOnly, cudaStream_t stream);
-void CommSBNGpu(Domain& domain, Int_t xferFields, Domain_member *fieldData, cudaStream_t *streams);
-void CommSyncPosVelGpu(Domain& domain, cudaStream_t *streams);
-void CommMonoQGpu(Domain& domain, cudaStream_t stream);
+void MimicCommSBNGpu(Domain& domain, Int_t xferFields, Domain_member *fieldData, cudaStream_t *streams);
+void MimicCommSyncPosVelGpu(Domain& domain, cudaStream_t *streams);
+void MimicCommMonoQGpu(Domain& domain, cudaStream_t stream);
 
 // Device helper functions for computation
 __device__ inline real4 SQRT(real4 arg);
