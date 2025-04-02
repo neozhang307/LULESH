@@ -1,0 +1,40 @@
+NVCC		= nvcc
+FLAGS		= -arch=sm_80 -Xcompiler -fpermissive
+DFLAGS	= -lineinfo
+RFLAGS 	= -O3 -DNDEBUG 
+
+LINKFLAGS = 
+
+all: release 
+
+debug: LINKFLAGS += 
+
+release: 	FLAGS += $(RFLAGS)
+debug: 		FLAGS += $(DFLAGS)
+
+release: lulesh
+debug: lulesh
+
+lulesh: allocator.o lulesh_main.o lulesh_compute.o lulesh_compute_base.o lulesh_comms.o lulesh_comms_gpu.o
+	$(NVCC) $(LINKFLAGS) allocator.o lulesh_main.o lulesh_compute.o lulesh_compute_comm.o lulesh_comms.o lulesh_comms_gpu.o -o lulesh
+
+allocator.o: ../src/utility/allocator.cu ../src/utility/vector.h
+	$(NVCC) $(FLAGS) ../src/utility/allocator.cu -I../src/ -I../src/utility/ -c -o allocator.o
+
+lulesh_compute.o: ../src/split/lulesh_compute.cu  ../src/utility/util.h ../src/utility/vector.h ../src/utility/allocator.h ../src/split/lulesh_kernels.h
+	$(NVCC) $(FLAGS) ../src/split/lulesh_compute.cu -I../src/ -I../src/split/ -I../src/utility/ -DUSE_CUDA -DNO_MPI -c -o lulesh_compute.o
+
+lulesh_compute_base.o: ../src/tiling/lulesh_compute_base.cu  ../src/utility/util.h ../src/utility/vector.h ../src/utility/allocator.h ../src/split/lulesh_kernels.h
+	$(NVCC) $(FLAGS) ../src/tiling/lulesh_compute_base.cu -I../src/ -I../src/split/ -I../src/utility/ -DUSE_CUDA -DNO_MPI -c -o lulesh_compute_comm.o
+
+lulesh_main.o: ../src/tiling/lulesh_main.cu  ../src/utility/util.h ../src/utility/vector.h ../src/utility/allocator.h
+	$(NVCC) $(FLAGS) ../src/tiling/lulesh_main.cu -I../src/ -I../src/split/ -I../src/utility/ -DUSE_CUDA -DNO_MPI -c -o lulesh_main.o
+
+lulesh_comms.o: ../src/split/lulesh-comms.cu 
+	$(NVCC) $(FLAGS) ../src/split/lulesh-comms.cu -I../src/ -I../src/split/ -I../src/split/ -I../src/utility/ -DUSE_CUDA -DNO_MPI -c -o lulesh_comms.o
+
+lulesh_comms_gpu.o: ../src/split/lulesh-comms-gpu.cu 
+	$(NVCC) $(FLAGS) ../src/split/lulesh-comms-gpu.cu -I../src/ -I../src/split/ -I../src/split/ -I../src/utility/ -DUSE_CUDA -DNO_MPI -c -o lulesh_comms_gpu.o
+
+clean: 
+	rm -rf allocator.o lulesh_main.o lulesh_compute.o lulesh_compute_comm.o lulesh_comms.o lulesh_comms_gpu.o lulesh xyz.asc regNumList.txt
