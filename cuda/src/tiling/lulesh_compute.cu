@@ -100,7 +100,7 @@ void CalcVolumeForceForElems(const Real_t hgcoef,Domain *domain)
     bool hourg_gt_zero = hgcoef > Real_t(0.0);
     if (hourg_gt_zero)
     {
-      CalcVolumeForceForElems_kernel<true> <<<dimGrid,block_size>>>
+      CalcVolumeForceForElems_kernel<true> <<<dimGrid,block_size,0,domain->streams[0]>>>
       ( domain->volo.raw(), 
         domain->v.raw(), 
         domain->p.raw(), 
@@ -125,7 +125,7 @@ void CalcVolumeForceForElems(const Real_t hgcoef,Domain *domain)
     }
     else
     {
-      CalcVolumeForceForElems_kernel<false> <<<dimGrid,block_size>>>
+      CalcVolumeForceForElems_kernel<false> <<<dimGrid,block_size,0,domain->streams[0]>>>
       ( domain->volo.raw(),
         domain->v.raw(), 
         domain->p.raw(), 
@@ -155,7 +155,7 @@ void CalcVolumeForceForElems(const Real_t hgcoef,Domain *domain)
     // Launch boundary nodes first
     dimGrid= PAD_DIV(num_threads,block_size);
 
-    AddNodeForcesFromElems_kernel<<<dimGrid,block_size>>>
+    AddNodeForcesFromElems_kernel<<<dimGrid,block_size,0,domain->streams[0]>>>
     ( domain->numNode,
       domain->padded_numNode,
       domain->nodeElemCount.raw(),
@@ -198,7 +198,7 @@ void CalcAccelerationForNodes(Domain *domain)
     Index_t dimBlock = 128;
     Index_t dimGrid = PAD_DIV(domain->numNode,dimBlock);
 
-    CalcAccelerationForNodes_kernel<<<dimGrid, dimBlock>>>
+    CalcAccelerationForNodes_kernel<<<dimGrid, dimBlock,0,domain->streams[0]>>>
         (domain->numNode,
          domain->xdd.raw(),domain->ydd.raw(),domain->zdd.raw(),
          domain->fx.raw(),domain->fy.raw(),domain->fz.raw(),
@@ -217,21 +217,21 @@ void ApplyAccelerationBoundaryConditionsForNodes(Domain *domain)
 
     Index_t dimGrid = PAD_DIV(domain->numSymmX,dimBlock);
     if (domain->numSymmX > 0)
-      ApplyAccelerationBoundaryConditionsForNodes_kernel<<<dimGrid, dimBlock>>>
+      ApplyAccelerationBoundaryConditionsForNodes_kernel<<<dimGrid, dimBlock,0,domain->streams[0]>>>
         (domain->numSymmX,
          domain->xdd.raw(),
          domain->symmX.raw());
 
     dimGrid = PAD_DIV(domain->numSymmY,dimBlock);
     if (domain->numSymmY > 0)
-      ApplyAccelerationBoundaryConditionsForNodes_kernel<<<dimGrid, dimBlock>>>
+      ApplyAccelerationBoundaryConditionsForNodes_kernel<<<dimGrid, dimBlock,0,domain->streams[0]>>>
         (domain->numSymmY,
          domain->ydd.raw(),
          domain->symmY.raw());
 
     dimGrid = PAD_DIV(domain->numSymmZ,dimBlock);
     if (domain->numSymmZ > 0)
-      ApplyAccelerationBoundaryConditionsForNodes_kernel<<<dimGrid, dimBlock>>>
+      ApplyAccelerationBoundaryConditionsForNodes_kernel<<<dimGrid, dimBlock,0,domain->streams[0]>>>
         (domain->numSymmZ,
          domain->zdd.raw(),
          domain->symmZ.raw());
@@ -274,7 +274,7 @@ void CalcPositionAndVelocityForNodes(const Real_t u_cut, Domain* domain)
     Index_t dimBlock = 128;
     Index_t dimGrid = PAD_DIV(domain->numNode,dimBlock);
 
-    CalcPositionAndVelocityForNodes_kernel<<<dimGrid, dimBlock>>>
+    CalcPositionAndVelocityForNodes_kernel<<<dimGrid, dimBlock,0,domain->streams[0]>>>
         (domain->numNode,domain->deltatime_h,u_cut,
          domain->x.raw(),domain->y.raw(),domain->z.raw(),
          domain->xd.raw(),domain->yd.raw(),domain->zd.raw(),
@@ -296,7 +296,7 @@ void CalcKinematicsAndMonotonicQGradient(Domain *domain)
     const int block_size = 64;
     int dimGrid = PAD_DIV(num_threads,block_size);
 
-    CalcKinematicsAndMonotonicQGradient_kernel<<<dimGrid,block_size>>>
+    CalcKinematicsAndMonotonicQGradient_kernel<<<dimGrid,block_size,0,domain->streams[0]>>>
     (  numElem,padded_numElem, domain->deltatime_h, 
        domain->nodelist.raw(),
        domain->volo.raw(),
@@ -339,7 +339,7 @@ void CalcMonotonicQRegionForElems(Domain *domain)
     Index_t dimBlock= 128;
     Index_t dimGrid = PAD_DIV(elength,dimBlock);
 
-    CalcMonotonicQRegionForElems_kernel<<<dimGrid,dimBlock>>>
+    CalcMonotonicQRegionForElems_kernel<<<dimGrid,dimBlock,0,domain->streams[0]>>>
     ( qlc_monoq,qqc_monoq,monoq_limiter_mult,monoq_max_slope,ptiny,elength,
       domain->regElemlist.raw(),domain->elemBC.raw(),
       domain->lxim.raw(),domain->lxip.raw(),
@@ -372,7 +372,7 @@ void ApplyMaterialPropertiesAndUpdateVolume(Domain *domain)
     Index_t dimBlock = 128;
     Index_t dimGrid = PAD_DIV(length,dimBlock);
 
-    ApplyMaterialPropertiesAndUpdateVolume_kernel<<<dimGrid,dimBlock>>>
+    ApplyMaterialPropertiesAndUpdateVolume_kernel<<<dimGrid,dimBlock,0,domain->streams[0]>>>
         (length,
          domain->refdens,
          domain->e_cut,
@@ -447,7 +447,7 @@ void CalcTimeConstraintsForElems(Domain* domain)
 
     // Launch kernel to compute per-block minimum timesteps
     // Each block processes a portion of the elements and finds local minimums
-    CalcTimeConstraintsForElems_kernel<dimBlock> <<<dimGrid, dimBlock>>>
+    CalcTimeConstraintsForElems_kernel<dimBlock> <<<dimGrid, dimBlock,0,domain->streams[0]>>>
         (length, qqc2, dvovmax,
          domain->matElemlist.raw(), domain->ss.raw(), domain->vdov.raw(), domain->arealg.raw(),
          dev_mindtcourant->raw(), dev_mindthydro->raw());
