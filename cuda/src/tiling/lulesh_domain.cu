@@ -594,7 +594,11 @@ Domain *NewDomain(char* argv[], Int_t numRanks, Index_t colLoc,
   domain->max_streams = 3;  // Use 3 streams: 0 and 1 for computation, 2 for communication
   domain->streams.resize(domain->max_streams);
 
-  for (Int_t i=0;i<domain->max_streams;i++)
+  // Make stream[0] the default stream (NULL)
+  domain->streams[0] = NULL;
+  
+  // Create other streams (1 and 2)
+  for (Int_t i=1; i<domain->max_streams; i++)
     cudaStreamCreate(&(domain->streams[i]));
 
   cudaEventCreateWithFlags(&domain->time_constraint_computed,cudaEventDisableTiming);
