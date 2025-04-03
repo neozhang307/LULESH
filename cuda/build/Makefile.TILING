@@ -30,18 +30,18 @@ lulesh_main.o: ../src/tiling/lulesh_main.cu ../src/tiling/lulesh_split.h ../src/
 lulesh_domain.o: ../src/tiling/lulesh_domain.cu ../src/tiling/lulesh_split.h ../src/tiling/lulesh_domain_groups.h ../src/utility/util.h ../src/utility/vector.h ../src/utility/allocator.h
 	$(NVCC) $(FLAGS) ../src/tiling/lulesh_domain.cu -I../src/ -I../src/tiling/ -I../src/utility/ -DUSE_CUDA -DNO_MPI -c -o lulesh_domain.o
 
-lulesh_compute.o: ../src/tiling/lulesh_compute.cu ../src/utility/util.h ../src/utility/vector.h ../src/utility/allocator.h ../src/tiling/lulesh_kernels.h
-	$(NVCC) $(FLAGS) ../src/tiling/lulesh_compute.cu -I../src/ -I../src/tiling/ -I../src/utility/ -DUSE_CUDA -DNO_MPI -c -o lulesh_compute.o
+lulesh_compute.o: ../src/split/lulesh_compute.cu ../src/utility/util.h ../src/utility/vector.h ../src/utility/allocator.h ../src/tiling/lulesh_kernels.h
+	$(NVCC) $(FLAGS) ../src/split/lulesh_compute.cu -I../src/ -I../src/tiling/ -I../src/utility/ -DUSE_CUDA -DNO_MPI -c -o lulesh_compute.o
 
 lulesh_compute_base.o: ../src/tiling/lulesh_compute_base.cu ../src/utility/util.h ../src/utility/vector.h ../src/utility/allocator.h ../src/tiling/lulesh_kernels.h
 	$(NVCC) $(FLAGS) ../src/tiling/lulesh_compute_base.cu -I../src/ -I../src/tiling/ -I../src/utility/ -DUSE_CUDA -DNO_MPI -c -o lulesh_compute_base.o
 
 # Communication files
-lulesh_comms.o: ../src/communication/lulesh-comms.cu 
-	$(NVCC) $(FLAGS) ../src/communication/lulesh-comms.cu -I../src/ -I../src/tiling/ -I../src/communication/ -I../src/utility/ -DUSE_CUDA -DNO_MPI -c -o lulesh_comms.o
+lulesh_comms.o: ../src/tiling/lulesh-comms.cu 
+	$(NVCC) $(FLAGS) ../src/tiling/lulesh-comms.cu -I../src/ -I../src/tiling/ -I../src/tiling/ -I../src/utility/ -DUSE_CUDA -DNO_MPI -c -o lulesh_comms.o
 
-lulesh_comms_gpu.o: ../src/communication/lulesh-comms-gpu.cu 
-	$(NVCC) $(FLAGS) ../src/communication/lulesh-comms-gpu.cu -I../src/ -I../src/tiling/ -I../src/communication/ -I../src/utility/ -DUSE_CUDA -DNO_MPI -c -o lulesh_comms_gpu.o
+lulesh_comms_gpu.o: ../src/tiling/lulesh-comms-gpu.cu 
+	$(NVCC) $(FLAGS) ../src/tiling/lulesh-comms-gpu.cu -I../src/ -I../src/tiling/ -I../src/tiling/ -I../src/utility/ -DUSE_CUDA -DNO_MPI -c -o lulesh_comms_gpu.o
 
 # Clean up all object files and executables
 clean: 
