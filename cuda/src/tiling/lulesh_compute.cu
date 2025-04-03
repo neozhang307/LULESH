@@ -410,7 +410,7 @@ void CalcMonotonicQRegionForElems(Domain *domain)
 
     CalcMonotonicQRegionForElems_kernel<<<dimGrid,dimBlock,0,domain->streams[0]>>>
     ( qlc_monoq,qqc_monoq,monoq_limiter_mult,monoq_max_slope,ptiny,elength,
-      domain->regElemlist.raw(),domain->elemBC,
+      domain->regElemlist,domain->elemBC,
       domain->lxim,domain->lxip,
       domain->letam,domain->letap,
       domain->lzetam,domain->lzetap,
@@ -491,7 +491,7 @@ void ApplyMaterialPropertiesAndUpdateVolume(Domain *domain)
          domain->q_cut,
          domain->eosvmin,
          domain->eosvmax,
-         domain->regElemlist.raw(),
+         domain->regElemlist,
          domain->e,
          domain->delv,
          domain->p,
@@ -501,8 +501,8 @@ void ApplyMaterialPropertiesAndUpdateVolume(Domain *domain)
          domain->v_cut,
          domain->bad_vol_h,
 	 domain->cost,
-	 domain->regCSR.raw(),
-	 domain->regReps.raw(),
+	 domain->regCSR,
+	 domain->regReps,
 	 domain->numReg
          );
 

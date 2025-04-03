@@ -416,11 +416,11 @@ void Domain::CreateRegionIndexSets(Int_t nr, Int_t b, Int_t tileID=0)
    regElemSize = new Int_t[numReg];
    Index_t nextIndex = 0;
 
-   Vector_h<Int_t> regCSR_h(regCSR.size());  // records the begining and end of each region
-   Vector_h<Int_t> regReps_h(regReps.size()); // records the rep number per region
-   Vector_h<Index_t> regNumList_h(regNumList.size());    // Region number per domain element
-   Vector_h<Index_t> regElemlist_h(regElemlist.size());  // region indexset 
-   Vector_h<Index_t> regSorted_h(regSorted.size()); // keeps index of sorted regions
+   Vector_h<Int_t> regCSR_h(numReg);  // records the begining and end of each region
+   Vector_h<Int_t> regReps_h(numReg); // records the rep number per region
+   Vector_h<Index_t> regNumList_h(numElem);    // Region number per domain element
+   Vector_h<Index_t> regElemlist_h(numElem);  // region indexset 
+   Vector_h<Index_t> regSorted_h(numReg); // keeps index of sorted regions
 
    //if we only have one region just fill it
    // Fill out the regNumList with material numbers, which are always
@@ -530,12 +530,12 @@ void Domain::CreateRegionIndexSets(Int_t nr, Int_t b, Int_t tileID=0)
       regCSR_h[r]++;
    }
 
-   // Copy to device
-   regCSR =  regCSR_h;  // records the begining and end of each region
-   regReps =  regReps_h; // records the rep number per region
-   regNumList =  regNumList_h;    // Region number per domain element
-   regElemlist = regElemlist_h;  // region indexset 
-   regSorted = regSorted_h; // keeps index of sorted regions
+   // Copy to device using cudaMemcpy
+   cudaMemcpy(regCSR, regCSR_h.raw(), numReg * sizeof(Int_t), cudaMemcpyHostToDevice);
+   cudaMemcpy(regReps, regReps_h.raw(), numReg * sizeof(Int_t), cudaMemcpyHostToDevice);
+   cudaMemcpy(regNumList, regNumList_h.raw(), numElem * sizeof(Index_t), cudaMemcpyHostToDevice);
+   cudaMemcpy(regElemlist, regElemlist_h.raw(), numElem * sizeof(Index_t), cudaMemcpyHostToDevice);
+   cudaMemcpy(regSorted, regSorted_h.raw(), numReg * sizeof(Index_t), cudaMemcpyHostToDevice);
    
    printf("DEBUG: Region setup complete, created %d regions\n", numReg);
    for (Int_t i=0; i<numReg; i++) {
@@ -1242,11 +1242,12 @@ Domain *NewDomain(char* argv[], Int_t numRanks, Index_t colLoc,
   fflush(stdout);
 
   domain->cost = cost;
-  domain->regNumList.resize(domain->numElem) ;  // material indexset
-  domain->regElemlist.resize(domain->numElem) ;  // material indexset
-  domain->regCSR.resize(nr);
-  domain->regReps.resize(nr);
-  domain->regSorted.resize(nr);
+  // Allocate device memory for region-related arrays
+  cudaMalloc((void**)&domain->regNumList, domain->numElem * sizeof(Index_t));
+  cudaMalloc((void**)&domain->regElemlist, domain->numElem * sizeof(Index_t));
+  cudaMalloc((void**)&domain->regCSR, nr * sizeof(Int_t));
+  cudaMalloc((void**)&domain->regReps, nr * sizeof(Int_t));
+  cudaMalloc((void**)&domain->regSorted, nr * sizeof(Index_t));
   
   printf("DEBUG: Region vectors initialized, preparing to create region index sets\n");
   fflush(stdout);

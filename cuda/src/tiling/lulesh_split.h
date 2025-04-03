@@ -269,11 +269,11 @@ public:
    Int_t balance; //Load balance between regions of a domain (def: 1)
    Int_t  cost;  //imbalance cost (def: 1)
    Int_t*   regElemSize ;   // Size of region sets
-   Vector_d<Int_t> regCSR;  // records the begining and end of each region
-   Vector_d<Int_t> regReps; // records the rep number per region
-   Vector_d<Index_t> regNumList;    // Region number per domain element
-   Vector_d<Index_t> regElemlist;  // region indexset 
-   Vector_d<Index_t> regSorted; // keeps index of sorted regions
+   Int_t* regCSR;  // records the begining and end of each region
+   Int_t* regReps; // records the rep number per region
+   Index_t* regNumList;    // Region number per domain element
+   Index_t* regElemlist;  // region indexset 
+   Index_t* regSorted; // keeps index of sorted regions
    
    //
    // MPI-Related additional data
