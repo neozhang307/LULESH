@@ -6,7 +6,9 @@
 #include <cuda_runtime.h>
 
 #define LULESH_SHOW_PROGRESS 0
-#define DOUBLE_PRECISION
+#ifndef DOUBLE_PRECISION
+// #define DOUBLE_PRECISION  // Now controlled by Makefile
+#endif
 //#define SAMI 
 
 #define MAX(a, b) (((a) > (b)) ? (a) : (b))
