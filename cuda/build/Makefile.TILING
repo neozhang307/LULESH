@@ -12,29 +12,37 @@ debug: LINKFLAGS +=
 release: 	FLAGS += $(RFLAGS)
 debug: 		FLAGS += $(DFLAGS)
 
-release: lulesh
-debug: lulesh
+release: tiled_lulesh
+debug: tiled_lulesh
 
-lulesh: allocator.o lulesh_main.o lulesh_compute.o lulesh_compute_base.o lulesh_comms.o lulesh_comms_gpu.o
-	$(NVCC) $(LINKFLAGS) allocator.o lulesh_main.o lulesh_compute.o lulesh_compute_comm.o lulesh_comms.o lulesh_comms_gpu.o -o lulesh
+# Main target - the tiled LULESH executable
+tiled_lulesh: allocator.o lulesh_main.o lulesh_compute.o lulesh_compute_base.o lulesh_domain.o lulesh_comms.o lulesh_comms_gpu.o
+	$(NVCC) $(LINKFLAGS) allocator.o lulesh_main.o lulesh_compute.o lulesh_compute_base.o lulesh_domain.o lulesh_comms.o lulesh_comms_gpu.o -o tiled_lulesh
 
+# Utility files
 allocator.o: ../src/utility/allocator.cu ../src/utility/vector.h
 	$(NVCC) $(FLAGS) ../src/utility/allocator.cu -I../src/ -I../src/utility/ -c -o allocator.o
 
-lulesh_compute.o: ../src/split/lulesh_compute.cu  ../src/utility/util.h ../src/utility/vector.h ../src/utility/allocator.h ../src/split/lulesh_kernels.h
-	$(NVCC) $(FLAGS) ../src/split/lulesh_compute.cu -I../src/ -I../src/split/ -I../src/utility/ -DUSE_CUDA -DNO_MPI -c -o lulesh_compute.o
+# Tiling implementation files
+lulesh_main.o: ../src/tiling/lulesh_main.cu ../src/tiling/lulesh_split.h ../src/tiling/lulesh_domain_groups.h ../src/utility/util.h ../src/utility/vector.h ../src/utility/allocator.h
+	$(NVCC) $(FLAGS) ../src/tiling/lulesh_main.cu -I../src/ -I../src/tiling/ -I../src/utility/ -DUSE_CUDA -DNO_MPI -c -o lulesh_main.o
 
-lulesh_compute_base.o: ../src/tiling/lulesh_compute_base.cu  ../src/utility/util.h ../src/utility/vector.h ../src/utility/allocator.h ../src/split/lulesh_kernels.h
-	$(NVCC) $(FLAGS) ../src/tiling/lulesh_compute_base.cu -I../src/ -I../src/split/ -I../src/utility/ -DUSE_CUDA -DNO_MPI -c -o lulesh_compute_comm.o
+lulesh_domain.o: ../src/tiling/lulesh_domain.cu ../src/tiling/lulesh_split.h ../src/tiling/lulesh_domain_groups.h ../src/utility/util.h ../src/utility/vector.h ../src/utility/allocator.h
+	$(NVCC) $(FLAGS) ../src/tiling/lulesh_domain.cu -I../src/ -I../src/tiling/ -I../src/utility/ -DUSE_CUDA -DNO_MPI -c -o lulesh_domain.o
 
-lulesh_main.o: ../src/tiling/lulesh_main.cu  ../src/utility/util.h ../src/utility/vector.h ../src/utility/allocator.h
-	$(NVCC) $(FLAGS) ../src/tiling/lulesh_main.cu -I../src/ -I../src/split/ -I../src/utility/ -DUSE_CUDA -DNO_MPI -c -o lulesh_main.o
+lulesh_compute.o: ../src/tiling/lulesh_compute.cu ../src/utility/util.h ../src/utility/vector.h ../src/utility/allocator.h ../src/tiling/lulesh_kernels.h
+	$(NVCC) $(FLAGS) ../src/tiling/lulesh_compute.cu -I../src/ -I../src/split/ -I../src/utility/ -DUSE_CUDA -DNO_MPI -c -o lulesh_compute.o
 
-lulesh_comms.o: ../src/split/lulesh-comms.cu 
-	$(NVCC) $(FLAGS) ../src/split/lulesh-comms.cu -I../src/ -I../src/split/ -I../src/split/ -I../src/utility/ -DUSE_CUDA -DNO_MPI -c -o lulesh_comms.o
+lulesh_compute_base.o: ../src/tiling/lulesh_compute_base.cu ../src/utility/util.h ../src/utility/vector.h ../src/utility/allocator.h ../src/tiling/lulesh_kernels.h
+	$(NVCC) $(FLAGS) ../src/tiling/lulesh_compute_base.cu -I../src/ -I../src/split/ -I../src/tiling/ -I../src/utility/ -DUSE_CUDA -DNO_MPI -c -o lulesh_compute_base.o
 
-lulesh_comms_gpu.o: ../src/split/lulesh-comms-gpu.cu 
-	$(NVCC) $(FLAGS) ../src/split/lulesh-comms-gpu.cu -I../src/ -I../src/split/ -I../src/split/ -I../src/utility/ -DUSE_CUDA -DNO_MPI -c -o lulesh_comms_gpu.o
+# Communication files
+lulesh_comms.o: ../src/communication/lulesh-comms.cu 
+	$(NVCC) $(FLAGS) ../src/communication/lulesh-comms.cu -I../src/ -I../src/split/ -I../src/communication/ -I../src/utility/ -DUSE_CUDA -DNO_MPI -c -o lulesh_comms.o
 
+lulesh_comms_gpu.o: ../src/communication/lulesh-comms-gpu.cu 
+	$(NVCC) $(FLAGS) ../src/communication/lulesh-comms-gpu.cu -I../src/ -I../src/split/ -I../src/communication/ -I../src/utility/ -DUSE_CUDA -DNO_MPI -c -o lulesh_comms_gpu.o
+
+# Clean up all object files and executables
 clean: 
-	rm -rf allocator.o lulesh_main.o lulesh_compute.o lulesh_compute_comm.o lulesh_comms.o lulesh_comms_gpu.o lulesh xyz.asc regNumList.txt
+	rm -rf allocator.o lulesh_main.o lulesh_compute.o lulesh_compute_base.o lulesh_domain.o lulesh_comms.o lulesh_comms_gpu.o tiled_lulesh xyz.asc regNumList.txt
