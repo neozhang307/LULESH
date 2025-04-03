@@ -71,6 +71,7 @@ Additional BSD Notice
 #include "utility/sm_utils.inl"
 #include "utility/allocator.h"
 #include "lulesh_kernels.h"
+#include "tiling_utils.h"
 // checkErrors function is already defined at line 75
 
 
@@ -88,9 +89,9 @@ void CalcVolumeForceForElems(const Real_t hgcoef,Domain *domain)
     Vector_d<Real_t>* fy_elem = Allocator< Vector_d<Real_t> >::allocate(padded_numElem*8);
     Vector_d<Real_t>* fz_elem = Allocator< Vector_d<Real_t> >::allocate(padded_numElem*8);
 #else
-    thrust::fill(domain->fx.begin(),domain->fx.end(),0.);
-    thrust::fill(domain->fy.begin(),domain->fy.end(),0.);
-    thrust::fill(domain->fz.begin(),domain->fz.end(),0.);
+    MimicFill(domain->fx.raw(), domain->fx.size(), Real_t(0.), domain->streams[0]);
+    MimicFill(domain->fy.raw(), domain->fy.size(), Real_t(0.), domain->streams[0]);
+    MimicFill(domain->fz.raw(), domain->fz.size(), Real_t(0.), domain->streams[0]);
 #endif
 
     int num_threads = numElem ;

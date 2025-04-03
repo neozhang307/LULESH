@@ -2,6 +2,7 @@
 #include <utility/util.h>
 #include <utility/sm_utils.inl>
 #include <utility/allocator.h>
+#include "tiling_utils.h"
 
 
 void AllocateNodalPersistent(Domain* domain, size_t domNodes)
@@ -79,21 +80,22 @@ void InitializeFields(Domain* domain)
 {
  /* Basic Field Initialization */
 
- thrust::fill(domain->ss.begin(),domain->ss.end(),0.);
- thrust::fill(domain->e.begin(),domain->e.end(),0.);
- thrust::fill(domain->p.begin(),domain->p.end(),0.);
- thrust::fill(domain->q.begin(),domain->q.end(),0.);
- thrust::fill(domain->v.begin(),domain->v.end(),1.);
+ // Use MimicFill instead of thrust::fill for better stream control
+ MimicFill(domain->ss.raw(), domain->ss.size(), Real_t(0.), domain->streams[0]);
+ MimicFill(domain->e.raw(), domain->e.size(), Real_t(0.), domain->streams[0]);
+ MimicFill(domain->p.raw(), domain->p.size(), Real_t(0.), domain->streams[0]);
+ MimicFill(domain->q.raw(), domain->q.size(), Real_t(0.), domain->streams[0]);
+ MimicFill(domain->v.raw(), domain->v.size(), Real_t(1.), domain->streams[0]);
 
- thrust::fill(domain->xd.begin(),domain->xd.end(),0.);
- thrust::fill(domain->yd.begin(),domain->yd.end(),0.);
- thrust::fill(domain->zd.begin(),domain->zd.end(),0.);
+ MimicFill(domain->xd.raw(), domain->xd.size(), Real_t(0.), domain->streams[0]);
+ MimicFill(domain->yd.raw(), domain->yd.size(), Real_t(0.), domain->streams[0]);
+ MimicFill(domain->zd.raw(), domain->zd.size(), Real_t(0.), domain->streams[0]);
 
- thrust::fill(domain->xdd.begin(),domain->xdd.end(),0.);
- thrust::fill(domain->ydd.begin(),domain->ydd.end(),0.);
- thrust::fill(domain->zdd.begin(),domain->zdd.end(),0.);
+ MimicFill(domain->xdd.raw(), domain->xdd.size(), Real_t(0.), domain->streams[0]);
+ MimicFill(domain->ydd.raw(), domain->ydd.size(), Real_t(0.), domain->streams[0]);
+ MimicFill(domain->zdd.raw(), domain->zdd.size(), Real_t(0.), domain->streams[0]);
 
- thrust::fill(domain->nodalMass.begin(),domain->nodalMass.end(),0.);
+ MimicFill(domain->nodalMass.raw(), domain->nodalMass.size(), Real_t(0.), domain->streams[0]);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
