@@ -188,13 +188,13 @@ public:
 
   /* Boundary nodesets */
 
-  Vector_d<Index_t> symmX ;       /* symmetry plane nodesets */
-  Vector_d<Index_t> symmY ;        
-  Vector_d<Index_t> symmZ ;
+  Index_t* symmX ;       /* symmetry plane nodesets */
+  Index_t* symmY ;        
+  Index_t* symmZ ;
    
-  Vector_d<Int_t> nodeElemCount ;
-  Vector_d<Int_t> nodeElemStart;
-  Vector_d<Index_t> nodeElemCornerList ;
+  Int_t* nodeElemCount ;
+  Int_t* nodeElemStart;
+  Index_t* nodeElemCornerList ;
 
   /* Parameters */
 
@@ -236,15 +236,15 @@ public:
   Real_t dvovmax ;              /* maximum allowable volume change */
   Real_t refdens ;              /* reference density */
 
-   Index_t m_colLoc ;
-   Index_t m_rowLoc ;
-   Index_t m_planeLoc ;
-   Index_t m_tp ;
+  Index_t m_colLoc ;
+  Index_t m_rowLoc ;
+  Index_t m_planeLoc ;
+  Index_t m_tp ;
 
-   Index_t&  colLoc()             { return m_colLoc ; }
-   Index_t&  rowLoc()             { return m_rowLoc ; }
-   Index_t&  planeLoc()           { return m_planeLoc ; }
-   Index_t&  tp()                 { return m_tp ; }
+  Index_t&  colLoc()             { return m_colLoc ; }
+  Index_t&  rowLoc()             { return m_rowLoc ; }
+  Index_t&  planeLoc()           { return m_planeLoc ; }
+  Index_t&  tp()                 { return m_tp ; }
 
   Index_t sizeX ;
   Index_t sizeY ;

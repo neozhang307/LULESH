@@ -159,9 +159,9 @@ void CalcVolumeForceForElems(const Real_t hgcoef,Domain *domain)
     AddNodeForcesFromElems_kernel<<<dimGrid,block_size,0,domain->streams[0]>>>
     ( domain->numNode,
       domain->padded_numNode,
-      domain->nodeElemCount.raw(),  // Keep Vector_d for now
-      domain->nodeElemStart.raw(),  // Keep Vector_d for now
-      domain->nodeElemCornerList.raw(),  // Keep Vector_d for now
+      domain->nodeElemCount,
+      domain->nodeElemStart,
+      domain->nodeElemCornerList,
       fx_elem->raw(),
       fy_elem->raw(),
       fz_elem->raw(),
@@ -221,21 +221,21 @@ void ApplyAccelerationBoundaryConditionsForNodes(Domain *domain)
       ApplyAccelerationBoundaryConditionsForNodes_kernel<<<dimGrid, dimBlock,0,domain->streams[0]>>>
         (domain->numSymmX,
          domain->xdd,
-         domain->symmX.raw());
+         domain->symmX);
 
     dimGrid = PAD_DIV(domain->numSymmY,dimBlock);
     if (domain->numSymmY > 0)
       ApplyAccelerationBoundaryConditionsForNodes_kernel<<<dimGrid, dimBlock,0,domain->streams[0]>>>
         (domain->numSymmY,
          domain->ydd,
-         domain->symmY.raw());
+         domain->symmY);
 
     dimGrid = PAD_DIV(domain->numSymmZ,dimBlock);
     if (domain->numSymmZ > 0)
       ApplyAccelerationBoundaryConditionsForNodes_kernel<<<dimGrid, dimBlock,0,domain->streams[0]>>>
         (domain->numSymmZ,
          domain->zdd,
-         domain->symmZ.raw());
+         domain->symmZ);
 }
 
 __global__
@@ -539,6 +539,35 @@ void ApplyMaterialPropertiesAndUpdateVolume(Domain *domain)
  */
 void CalcTimeConstraintsForElems(Domain* domain)
 {
+    printf("DEBUG: Entered CalcTimeConstraintsForElems\n");
+    fflush(stdout);
+    
+    // Check if domain pointers are valid
+    if (domain->dthydro_h == nullptr) {
+        printf("ERROR: domain->dthydro_h is NULL\n");
+        fflush(stdout);
+    }
+    if (domain->dtcourant_h == nullptr) {
+        printf("ERROR: domain->dtcourant_h is NULL\n");
+        fflush(stdout);
+    }
+    if (domain->matElemlist == nullptr) {
+        printf("ERROR: domain->matElemlist is NULL\n");
+        fflush(stdout);
+    }
+    if (domain->ss == nullptr) {
+        printf("ERROR: domain->ss is NULL\n");
+        fflush(stdout);
+    }
+    if (domain->vdov == nullptr) {
+        printf("ERROR: domain->vdov is NULL\n");
+        fflush(stdout);
+    }
+    if (domain->arealg == nullptr) {
+        printf("ERROR: domain->arealg is NULL\n");
+        fflush(stdout);
+    }
+    
     // Get artificial viscosity coefficient from domain
     Real_t qqc = domain->qqc;
     // Square and scale the coefficient (64.0 is a constant for the CFL calculation)
@@ -560,28 +589,30 @@ void CalcTimeConstraintsForElems(Domain* domain)
     cudaFuncSetCacheConfig(CalcTimeConstraintsForElems_kernel<dimBlock>, cudaFuncCachePreferShared);
 
     // Allocate device memory for per-block minimum timesteps
-    Vector_d<Real_t>* dev_mindtcourant = Allocator< Vector_d<Real_t> >::allocate(dimGrid);
-    Vector_d<Real_t>* dev_mindthydro = Allocator< Vector_d<Real_t> >::allocate(dimGrid);
+    Real_t* dev_mindtcourant;
+    Real_t* dev_mindthydro;
+    cudaMalloc((void**)&dev_mindtcourant, dimGrid * sizeof(Real_t));
+    cudaMalloc((void**)&dev_mindthydro, dimGrid * sizeof(Real_t));
 
     // Launch kernel to compute per-block minimum timesteps
     // Each block processes a portion of the elements and finds local minimums
     CalcTimeConstraintsForElems_kernel<dimBlock> <<<dimGrid, dimBlock,0,domain->streams[0]>>>
         (length, qqc2, dvovmax,
          domain->matElemlist, domain->ss, domain->vdov, domain->arealg,
-         dev_mindtcourant->raw(), dev_mindthydro->raw());
+         dev_mindtcourant, dev_mindthydro);
 
     // TODO: if dimGrid < 1024, should launch less threads
     // Launch second kernel to find global minimum across all blocks
     // This kernel performs the final reduction and stores results in domain
     CalcMinDtOneBlock<max_dimGrid> <<<2, max_dimGrid, max_dimGrid*sizeof(Real_t), domain->streams[1]>>>
-        (dev_mindthydro->raw(), dev_mindtcourant->raw(), domain->dtcourant_h, domain->dthydro_h, dimGrid);
+        (dev_mindthydro, dev_mindtcourant, domain->dtcourant_h, domain->dthydro_h, dimGrid);
 
     // Record event to track when timestep calculation is complete
     // This allows other operations to wait for this calculation to finish
     cudaEventRecord(domain->time_constraint_computed, domain->streams[1]);
 
     // Free temporary device memory
-    Allocator<Vector_d<Real_t> >::free(dev_mindtcourant, dimGrid);
-    Allocator<Vector_d<Real_t> >::free(dev_mindthydro, dimGrid);
+    cudaFree(dev_mindtcourant);
+    cudaFree(dev_mindthydro);
 }
 

@@ -83,17 +83,17 @@ void AllocateElemPersistent(Domain* domain, size_t domElems, size_t padded_domEl
 
 void AllocateSymmX(Domain* domain, size_t size)
 {
-   domain->symmX.resize(size) ;
+   cudaMalloc((void**)&domain->symmX, size * sizeof(Index_t));
 }
 
 void AllocateSymmY(Domain* domain, size_t size)
 {
-   domain->symmY.resize(size) ;
+   cudaMalloc((void**)&domain->symmY, size * sizeof(Index_t));
 }
 
 void AllocateSymmZ(Domain* domain, size_t size)
 {
-   domain->symmZ.resize(size) ;
+   cudaMalloc((void**)&domain->symmZ, size * sizeof(Index_t));
 }
 
 void InitializeFields(Domain* domain)
@@ -759,9 +759,9 @@ Domain *NewDomain(char* argv[], Int_t numRanks, Index_t colLoc,
 
     /* set up symmetry nodesets */
 
-    Vector_h<Index_t> symmX_h(domain->symmX.size());
-    Vector_h<Index_t> symmY_h(domain->symmY.size());
-    Vector_h<Index_t> symmZ_h(domain->symmZ.size());
+    Vector_h<Index_t> symmX_h(domain->numSymmX);
+    Vector_h<Index_t> symmY_h(domain->numSymmY);
+    Vector_h<Index_t> symmZ_h(domain->numSymmZ);
 
     Int_t nidx = 0 ;
     for (Index_t i=0; i<edgeNodes; ++i) {
@@ -782,11 +782,12 @@ Domain *NewDomain(char* argv[], Int_t numRanks, Index_t colLoc,
     }
 
     if (domain->m_planeLoc == 0)
-      domain->symmZ = symmZ_h;
+      cudaMemcpy(domain->symmZ, symmZ_h.raw(), domain->numSymmZ * sizeof(Index_t), cudaMemcpyHostToDevice);
     if (domain->m_rowLoc == 0)
-      domain->symmY = symmY_h;
+      cudaMemcpy(domain->symmY, symmY_h.raw(), domain->numSymmY * sizeof(Index_t), cudaMemcpyHostToDevice);
     if (domain->m_colLoc == 0)
-      domain->symmX = symmX_h;
+      // Copy symmetry nodesets to device
+      cudaMemcpy(domain->symmX, symmX_h.raw(), domain->numSymmX * sizeof(Index_t), cudaMemcpyHostToDevice);
       
     printf("DEBUG: Symmetry nodesets set up: X=%d, Y=%d, Z=%d\n", 
            domain->numSymmX, domain->numSymmY, domain->numSymmZ);
@@ -890,7 +891,7 @@ Domain *NewDomain(char* argv[], Int_t numRanks, Index_t colLoc,
        fsuccess = fscanf(fp, "%d", &n) ;
        symmX_h[i] = Index_t(n) ;
     }
-    domain->symmX = symmX_h;
+    cudaMemcpy(domain->symmX, symmX_h.raw(), domain->numSymmX * sizeof(Index_t), cudaMemcpyHostToDevice);
 
     fsuccess = fscanf(fp, "%d", &domain->numSymmY) ;
     Vector_h<Index_t> symmY_h(domain->numSymmY);
@@ -899,7 +900,7 @@ Domain *NewDomain(char* argv[], Int_t numRanks, Index_t colLoc,
        fsuccess = fscanf(fp, "%d", &n) ;
        symmY_h[i] = Index_t(n) ;
     }
-    domain->symmY = symmY_h;
+    cudaMemcpy(domain->symmY, symmY_h.raw(), domain->numSymmY * sizeof(Index_t), cudaMemcpyHostToDevice);
 
     fsuccess = fscanf(fp, "%d", &domain->numSymmZ) ;
     Vector_h<Index_t> symmZ_h(domain->numSymmZ);
@@ -908,7 +909,7 @@ Domain *NewDomain(char* argv[], Int_t numRanks, Index_t colLoc,
        fsuccess = fscanf(fp, "%d", &n) ;
        symmZ_h[i] = Index_t(n) ;
     }
-    domain->symmZ = symmZ_h;
+    cudaMemcpy(domain->symmZ, symmZ_h.raw(), domain->numSymmZ * sizeof(Index_t), cudaMemcpyHostToDevice);
 
     /* set up free surface nodeset */
     Index_t numFreeSurf;
@@ -1075,9 +1076,15 @@ Domain *NewDomain(char* argv[], Int_t numRanks, Index_t colLoc,
   printf("DEBUG: Node element corner list verified\n");
   fflush(stdout);
 
-  domain->nodeElemStart = nodeElemStart_h;
-  domain->nodeElemCount = nodeElemCount_h;
-  domain->nodeElemCornerList = nodeElemCornerList_h;
+  // Allocate device memory for node-element relationship data
+  cudaMalloc((void**)&domain->nodeElemStart, domNodes * sizeof(Int_t));
+  cudaMalloc((void**)&domain->nodeElemCount, domNodes * sizeof(Int_t));
+  cudaMalloc((void**)&domain->nodeElemCornerList, cornerListSize * sizeof(Index_t));
+  
+  // Copy data from host to device
+  cudaMemcpy(domain->nodeElemStart, nodeElemStart_h.raw(), domNodes * sizeof(Int_t), cudaMemcpyHostToDevice);
+  cudaMemcpy(domain->nodeElemCount, nodeElemCount_h.raw(), domNodes * sizeof(Int_t), cudaMemcpyHostToDevice);
+  cudaMemcpy(domain->nodeElemCornerList, nodeElemCornerList_h.raw(), cornerListSize * sizeof(Index_t), cudaMemcpyHostToDevice);
   printf("DEBUG: Node element indexing data transferred to device\n");
   fflush(stdout);
 
