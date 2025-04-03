@@ -94,19 +94,25 @@ Additional BSD Notice
  */
 void LagrangeNodal(Domain *domain)
 {
+  printf("DEBUG: Inside LagrangeNodal\n");
+  
 #ifdef SEDOV_SYNC_POS_VEL_EARLY
    // Array of function pointers for accessing domain data during MPI communication
    Domain_member fieldData[6];
+   printf("DEBUG: SEDOV_SYNC_POS_VEL_EARLY defined\n");
 #endif
 
   // Get bulk viscosity cutoff parameter (controls artificial viscosity)
   Real_t u_cut = domain->u_cut;
+  printf("DEBUG: Got u_cut = %e\n", u_cut);
 
   /* time of boundary condition evaluation is beginning of step for force and
    * acceleration boundary conditions. */
   // Step 1: Calculate forces on each node from surrounding elements
   // This accumulates all forces (internal, external, artificial viscosity)
+  printf("DEBUG: Calling CalcForceForNodes\n");
   CalcForceForNodes(domain);
+  printf("DEBUG: CalcForceForNodes completed\n");
 
 #if USE_MPI  
 #ifdef SEDOV_SYNC_POS_VEL_EARLY
@@ -212,35 +218,52 @@ void CalcForceForNodes(Domain *domain)
  */
 void LagrangeElements(Domain *domain)
 {
+  printf("DEBUG: Inside LagrangeElements\n");
+  fflush(stdout);
+  
   // Calculate total elements including ghost elements for MPI
   int allElem = domain->numElem +  /* local elem */
                 2*domain->sizeX*domain->sizeY + /* plane ghosts */
                 2*domain->sizeX*domain->sizeZ + /* row ghosts */
                 2*domain->sizeY*domain->sizeZ ; /* col ghosts */
+  
+  printf("DEBUG: Domain dimensions - sizeX=%d, sizeY=%d, sizeZ=%d\n", 
+         domain->sizeX, domain->sizeY, domain->sizeZ);
+  printf("DEBUG: Elements - local=%d, total with ghosts=%d\n", 
+         domain->numElem, allElem);
+  fflush(stdout);
 
   // Allocate temporary arrays for this phase
+  printf("DEBUG: Allocating temporary arrays\n");
+  fflush(stdout);
+  
   // vnew: new relative volume
-  domain->vnew = Allocator< Vector_d<Real_t> >::allocate(domain->numElem);
+  cudaMalloc((void**)&domain->vnew, domain->numElem * sizeof(Real_t));
   // Principal strain terms (diagonal components of strain tensor)
-  domain->dxx  = Allocator< Vector_d<Real_t> >::allocate(domain->numElem);
-  domain->dyy  = Allocator< Vector_d<Real_t> >::allocate(domain->numElem);
-  domain->dzz  = Allocator< Vector_d<Real_t> >::allocate(domain->numElem);
+  cudaMalloc((void**)&domain->dxx, domain->numElem * sizeof(Real_t));
+  cudaMalloc((void**)&domain->dyy, domain->numElem * sizeof(Real_t));
+  cudaMalloc((void**)&domain->dzz, domain->numElem * sizeof(Real_t));
 
   // Coordinate gradients (spatial derivatives in each direction)
-  domain->delx_xi    = Allocator< Vector_d<Real_t> >::allocate(domain->numElem);
-  domain->delx_eta   = Allocator< Vector_d<Real_t> >::allocate(domain->numElem);
-  domain->delx_zeta  = Allocator< Vector_d<Real_t> >::allocate(domain->numElem);
+  cudaMalloc((void**)&domain->delx_xi, domain->numElem * sizeof(Real_t));
+  cudaMalloc((void**)&domain->delx_eta, domain->numElem * sizeof(Real_t));
+  cudaMalloc((void**)&domain->delx_zeta, domain->numElem * sizeof(Real_t));
 
   // Velocity gradients (for all elements including ghosts)
-  domain->delv_xi    = Allocator< Vector_d<Real_t> >::allocate(allElem);
-  domain->delv_eta   = Allocator< Vector_d<Real_t> >::allocate(allElem);
-  domain->delv_zeta  = Allocator< Vector_d<Real_t> >::allocate(allElem);
+  cudaMalloc((void**)&domain->delv_xi, allElem * sizeof(Real_t));
+  cudaMalloc((void**)&domain->delv_eta, allElem * sizeof(Real_t));
+  cudaMalloc((void**)&domain->delv_zeta, allElem * sizeof(Real_t));
+  
+  printf("DEBUG: Temporary arrays allocated successfully\n");
+  fflush(stdout);
 
 #if USE_MPI     
   // For MPI: Start receiving monotonic q gradient data from other processes
   CommRecv(*domain, MSG_MONOQ, 3,
            domain->sizeX, domain->sizeY, domain->sizeZ,
            true, true);
+  printf("DEBUG: MPI - Started receiving monotonic q gradient data\n");
+  fflush(stdout);
 #endif
 
   /*********************************************/
@@ -248,16 +271,41 @@ void LagrangeElements(Domain *domain)
   /*********************************************/
   // Step A: Calculate velocity gradients and related terms
   // This computes how quickly the element is deforming
+  printf("DEBUG: Calling CalcKinematicsAndMonotonicQGradient\n");
+  fflush(stdout);
+  
+  // Check if volo pointer is valid before calculation
+  if (domain->volo == nullptr) {
+    printf("ERROR: domain->volo is NULL before CalcKinematicsAndMonotonicQGradient\n");
+    fflush(stdout);
+  } else {
+    // Read first element of volo for debugging
+    Real_t firstVolo;
+    cudaError_t err = cudaMemcpy(&firstVolo, domain->volo, sizeof(Real_t), cudaMemcpyDeviceToHost);
+    if (err != cudaSuccess) {
+      printf("ERROR: Failed to read volo[0]: %s\n", cudaGetErrorString(err));
+    } else {
+      printf("DEBUG: First element volo[0] = %e before kinematics calculation\n", firstVolo);
+    }
+    fflush(stdout);
+  }
+  
   CalcKinematicsAndMonotonicQGradient(domain);
+  
+  printf("DEBUG: CalcKinematicsAndMonotonicQGradient completed\n");
+  fflush(stdout);
 
 #if USE_MPI      
    // For MPI: Send calculated gradient data to other processes
    Domain_member fieldData[3];
 
+   printf("DEBUG: MPI - Preparing to send monotonic q gradient data\n");
+   fflush(stdout);
+   
    // Initialize raw device pointers for MPI communication
-   domain->d_delv_xi = domain->delv_xi->raw();
-   domain->d_delv_eta = domain->delv_eta->raw();
-   domain->d_delv_zeta = domain->delv_zeta->raw();
+   domain->d_delv_xi = domain->delv_xi;
+   domain->d_delv_eta = domain->delv_eta;
+   domain->d_delv_zeta = domain->delv_zeta;
 
    // Set up function pointers for velocity gradient access
    fieldData[0] = &Domain::get_delv_xi;
@@ -271,36 +319,80 @@ void LagrangeElements(Domain *domain)
    
    // Complete monotonic q communication
    CommMonoQGpu(*domain, domain->streams[2]);
+   
+   printf("DEBUG: MPI - Completed monotonic q communication\n");
+   fflush(stdout);
 #endif
 
   // Free temporary arrays no longer needed
-  Allocator<Vector_d<Real_t> >::free(domain->dxx, domain->numElem);
-  Allocator<Vector_d<Real_t> >::free(domain->dyy, domain->numElem);
-  Allocator<Vector_d<Real_t> >::free(domain->dzz, domain->numElem);
+  printf("DEBUG: Freeing first batch of temporary arrays (dxx, dyy, dzz)\n");
+  fflush(stdout);
+  
+  cudaFree(domain->dxx);
+  cudaFree(domain->dyy);
+  cudaFree(domain->dzz);
 
   /**********************************
   *    Calc Monotic Q Region
   **********************************/
   // Step B: Calculate artificial viscosity (q) for shock treatment
   // This helps prevent numerical oscillations near shock fronts
-   CalcMonotonicQRegionForElems(domain);
+  printf("DEBUG: Calling CalcMonotonicQRegionForElems\n");
+  fflush(stdout);
+  
+  // Check domain->volo again
+  if (domain->volo != nullptr) {
+    Real_t firstVolo;
+    cudaError_t err = cudaMemcpy(&firstVolo, domain->volo, sizeof(Real_t), cudaMemcpyDeviceToHost);
+    if (err == cudaSuccess) {
+      printf("DEBUG: First element volo[0] = %e before MonotonicQ calculation\n", firstVolo);
+      fflush(stdout);
+    }
+  }
+  
+  CalcMonotonicQRegionForElems(domain);
+  
+  printf("DEBUG: CalcMonotonicQRegionForElems completed\n");
+  fflush(stdout);
 
   // Free more temporary arrays
-  Allocator<Vector_d<Real_t> >::free(domain->delx_xi, domain->numElem);
-  Allocator<Vector_d<Real_t> >::free(domain->delx_eta, domain->numElem);
-  Allocator<Vector_d<Real_t> >::free(domain->delx_zeta, domain->numElem);
+  printf("DEBUG: Freeing second batch of temporary arrays (delx_*, delv_*)\n");
+  fflush(stdout);
+  
+  cudaFree(domain->delx_xi);
+  cudaFree(domain->delx_eta);
+  cudaFree(domain->delx_zeta);
 
-  Allocator<Vector_d<Real_t> >::free(domain->delv_xi, allElem);
-  Allocator<Vector_d<Real_t> >::free(domain->delv_eta, allElem);
-  Allocator<Vector_d<Real_t> >::free(domain->delv_zeta, allElem);
+  cudaFree(domain->delv_xi);
+  cudaFree(domain->delv_eta);
+  cudaFree(domain->delv_zeta);
 
   // Step C: Apply material equation of state and update element volumes
   // This calculates new pressures, energies, and volumes based on the
   // material model (ideal gas for Sedov blast wave problem)
+  printf("DEBUG: Calling ApplyMaterialPropertiesAndUpdateVolume\n");
+  fflush(stdout);
+  
+  // Check domain->volo once more
+  if (domain->volo != nullptr) {
+    Real_t firstVolo;
+    cudaError_t err = cudaMemcpy(&firstVolo, domain->volo, sizeof(Real_t), cudaMemcpyDeviceToHost);
+    if (err == cudaSuccess) {
+      printf("DEBUG: First element volo[0] = %e before material properties application\n", firstVolo);
+      fflush(stdout);
+    }
+  }
+  
   ApplyMaterialPropertiesAndUpdateVolume(domain);
   
+  printf("DEBUG: ApplyMaterialPropertiesAndUpdateVolume completed\n");
+  fflush(stdout);
+  
   // Free the last temporary array
-  Allocator<Vector_d<Real_t> >::free(domain->vnew, domain->numElem);
+  printf("DEBUG: Freeing last temporary array (vnew)\n");
+  cudaFree(domain->vnew);
+  printf("DEBUG: LagrangeElements function completed\n");
+  fflush(stdout);
 }
 // LagrangeNodal function already defined at line 1824
 
@@ -373,6 +465,8 @@ void TimeIncrement(Domain* domain)
 // Lagrangian leap-frog time integration
 void LagrangeLeapFrog(Domain* domain)
 {
+   printf("DEBUG: Inside LagrangeLeapFrog\n");
+   
    /* calculate nodal forces, accelerations, velocities, positions, with
     * applied boundary conditions and slide surface considerations */
    // Phase 1: Update node-centered quantities
@@ -380,7 +474,9 @@ void LagrangeLeapFrog(Domain* domain)
    // - Computes accelerations based on forces and nodal masses
    // - Applies boundary conditions (symmetry, free surfaces)
    // - Updates positions and velocities using time integration
+   printf("DEBUG: Calling LagrangeNodal\n");
    LagrangeNodal(domain);
+   printf("DEBUG: LagrangeNodal completed\n");
 
    /* calculate element quantities (i.e. velocity gradient & q), and update
     * material states */
@@ -389,11 +485,15 @@ void LagrangeLeapFrog(Domain* domain)
    // - Calculates artificial viscosity (q) for shock treatment
    // - Updates element volumes and material states
    // - Applies equation of state to compute new pressures and energies
+   printf("DEBUG: Calling LagrangeElements\n");
    LagrangeElements(domain);
+   printf("DEBUG: LagrangeElements completed\n");
 
    // Phase 3: Calculate new timestep based on Courant-Friedrichs-Lewy (CFL) condition
    // - Computes maximum stable timestep to ensure simulation stability
    // - Uses both velocity (Courant) and volume change (hydro) constraints
    // - Selects the most restrictive timestep across all elements
+   printf("DEBUG: Calling CalcTimeConstraintsForElems\n");
    CalcTimeConstraintsForElems(domain);
+   printf("DEBUG: CalcTimeConstraintsForElems completed\n");
 }

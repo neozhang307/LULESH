@@ -193,7 +193,7 @@ void VerifyAndWriteFinalOutput(Real_t elapsed_time,
    if(structured)
    {
       Real_t e_zero;
-      Real_t* d_ezero_ptr = locDom.e.raw() + locDom.octantCorner; /* octant corner supposed to be 0 */
+      Real_t* d_ezero_ptr = locDom.e + locDom.octantCorner; /* octant corner supposed to be 0 */
       cudaMemcpy(&e_zero, d_ezero_ptr, sizeof(Real_t), cudaMemcpyDeviceToHost);
 
       printf("Run completed:  \n");
@@ -207,7 +207,7 @@ void VerifyAndWriteFinalOutput(Real_t elapsed_time,
       Real_t   MaxRelDiff = Real_t(0.0);
 
       Real_t *e_all = new Real_t[nx * nx];
-      cudaMemcpy(e_all, locDom.e.raw(), nx * nx * sizeof(Real_t), cudaMemcpyDeviceToHost);
+      cudaMemcpy(e_all, locDom.e, nx * nx * sizeof(Real_t), cudaMemcpyDeviceToHost);
       for (Index_t j=0; j<nx; ++j) {
          for (Index_t k=j+1; k<nx; ++k) {
             Real_t AbsDiff = FABS(e_all[j*nx+k]-e_all[k*nx+j]);
@@ -248,12 +248,16 @@ void VerifyAndWriteFinalOutput(Real_t elapsed_time,
  */
 int main(int argc, char *argv[])
 {
+  printf("DEBUG: Starting main()\n");
+  fflush(stdout);
+  
   // Check for minimum required arguments (program name, grid type, size)
   if (argc < 3) {
     printUsage(argv);
     exit( LFileError );
   }
   
+  printf("DEBUG: Validating command line arguments\n");
   // Validate the grid type argument: either -u (unstructured) or -s (structured)
   if ( strcmp(argv[1],"-u") != 0 && strcmp(argv[1],"-s") != 0 ) 
   {
@@ -264,10 +268,12 @@ int main(int argc, char *argv[])
   // Default tiling size (1 means no tiling)
   Index_t tileSize = 1;
   
+  printf("DEBUG: Parsing optional arguments\n");
   // Parse optional arguments
   for (int i = 3; i < argc; i++) {
     if (strcmp(argv[i], "-t") == 0 && i+1 < argc) {
       tileSize = atoi(argv[i+1]);
+      printf("DEBUG: Set tile size to %d\n", tileSize);
       i++; // Skip the next argument as we've already processed it
     }
   }
@@ -278,29 +284,32 @@ int main(int argc, char *argv[])
   for (int i = 3; i < argc; i++) {
     if (strcmp(argv[i], "-i") == 0 && i+1 < argc) {
       num_iters = atoi(argv[i+1]);
+      printf("DEBUG: Set max iterations to %d\n", num_iters);
       i++; // Skip the next argument
     }
   }
 
   // Flag to indicate whether we're using structured or unstructured mesh
   bool structured = ( strcmp(argv[1],"-s") == 0 );
+  printf("DEBUG: Using %s mesh\n", structured ? "structured" : "unstructured");
 
   // Variables for tracking MPI processes
   Int_t numRanks ;
   Int_t myRank ;
 
-
+  printf("DEBUG: Setting up MPI ranks\n");
   // For non-MPI builds, single process
   numRanks = 1;
   myRank = 0;
 
-
+  printf("DEBUG: Initializing CUDA environment\n");
   // Initialize CUDA environment for this MPI rank
   cuda_init(myRank);
 
   /* assume cube subdomain geometry for now */
   // Number of elements in each dimension from command line
   Index_t nx = atoi(argv[2]);
+  printf("DEBUG: Problem size (nx) = %d\n", nx);
 
   // Domain group for managing domains
   DomainGroup *domainGroup = nullptr;
@@ -313,20 +322,30 @@ int main(int argc, char *argv[])
     printf("Running with tiling size %d x %d x %d\n", tileSize, tileSize, tileSize);
   }
   
+  printf("DEBUG: Setting up domain parameters\n");
   // TODO: change default nr to 11
   // Domain region parameters for load balancing experiments
   Int_t nr = 11;      // Number of regions
   Int_t balance = 1;  // Region assignment algorithm
   Int_t cost = 1;     // Cost multiplier for evaluating equation of state
 
+  printf("DEBUG: Creating domain group with tiles = %d\n", tileSize);
   // Create a domain group to manage the domains
   domainGroup = new DomainGroup(tileSize, tileSize, tileSize);
   
+  printf("DEBUG: Initializing domains\n");
   // Initialize all domains in the group
   domainGroup->initializeDomains(argv, nx, structured, nr, balance, cost);
   
+  printf("DEBUG: Getting base domain (0,0,0)\n");
   // Get the first domain (0,0,0) as base domain for compatibility with existing code
   baseDom = domainGroup->getDomain(0, 0, 0);
+  
+  if (baseDom == nullptr) {
+    printf("ERROR: Failed to get base domain, exiting\n");
+    exit(1);
+  }
+  printf("DEBUG: Base domain initialized successfully\n");
 
 #if USE_MPI   
    // copy to the host for mpi transfer
@@ -380,14 +399,30 @@ int main(int argc, char *argv[])
    gettimeofday(&start, NULL) ;
 
   // Main simulation loop - continues until simulation time reaches stop time
+  printf("DEBUG: Starting main simulation loop, time=%e, stoptime=%e\n", 
+         baseDom->time_h, baseDom->stoptime);
+  
   while(baseDom->time_h < baseDom->stoptime)
   {
+    printf("DEBUG: Starting iteration %d\n", its);
+    
     // For tiled execution, we could use domainGroup->stepSimulation() here
     // But for now, we'll continue with the existing approach using baseDom
     
     // Execute one timestep of the Lagrangian hydrodynamics simulation
-    LagrangeLeapFrog(baseDom);
+    try {
+      printf("DEBUG: Calling LagrangeLeapFrog\n");
+      LagrangeLeapFrog(baseDom);
+      printf("DEBUG: Completed LagrangeLeapFrog\n");
+    } catch (std::exception& e) {
+      printf("ERROR: Exception in LagrangeLeapFrog: %s\n", e.what());
+      break;
+    } catch (...) {
+      printf("ERROR: Unknown exception in LagrangeLeapFrog\n");
+      break;
+    }
 
+    printf("DEBUG: Checking for errors\n");
     // Verify solution is still valid, handles errors if any
     checkErrors(baseDom, its, myRank);
 
@@ -396,10 +431,19 @@ int main(int argc, char *argv[])
      if (myRank == 0) 
 	 printf("cycle = %d, time = %e, dt=%e\n", its+1, double(baseDom->time_h), double(baseDom->deltatime_h));
     #endif
+    
+    printf("DEBUG: Completed iteration %d, time=%e, dt=%e\n", 
+           its, double(baseDom->time_h), double(baseDom->deltatime_h));
+    
     its++;
     // Exit early if we've reached the specified iteration limit
-    if (its == num_iters) break;
+    if (its == num_iters) {
+      printf("DEBUG: Reached iteration limit (%d), exiting loop\n", num_iters);
+      break;
+    }
   }
+  
+  printf("DEBUG: Completed simulation loop after %d iterations\n", its);
 
   // make sure GPU finished its work
   // Synchronize to ensure all GPU operations are complete

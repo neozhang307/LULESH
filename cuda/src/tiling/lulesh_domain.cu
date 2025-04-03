@@ -3,6 +3,7 @@
 #include <utility/sm_utils.inl>
 #include <utility/allocator.h>
 #include "tiling_utils.h"
+#include <numeric> // For std::accumulate
 
 
 void AllocateNodalPersistent(Domain* domain, size_t domNodes)
@@ -28,37 +29,48 @@ void AllocateNodalPersistent(Domain* domain, size_t domNodes)
 
 void AllocateElemPersistent(Domain* domain, size_t domElems, size_t padded_domElems)
 {
-   domain->matElemlist.resize(domElems) ;  /* material indexset */
-   domain->nodelist.resize(8*padded_domElems) ;   /* elemToNode connectivity */
+   /* allocate material indexset */
+   cudaMalloc((void**)&domain->matElemlist, domElems * sizeof(Index_t));
+   /* allocate elemToNode connectivity */
+   cudaMalloc((void**)&domain->nodelist, 8 * padded_domElems * sizeof(Index_t));
 
-   domain->lxim.resize(domElems) ; /* elem connectivity through face */
-   domain->lxip.resize(domElems) ;
-   domain->letam.resize(domElems) ;
-   domain->letap.resize(domElems) ;
-   domain->lzetam.resize(domElems) ;
-   domain->lzetap.resize(domElems) ;
+   /* allocate element connectivity through face */
+   cudaMalloc((void**)&domain->lxim, domElems * sizeof(Index_t));
+   cudaMalloc((void**)&domain->lxip, domElems * sizeof(Index_t));
+   cudaMalloc((void**)&domain->letam, domElems * sizeof(Index_t));
+   cudaMalloc((void**)&domain->letap, domElems * sizeof(Index_t));
+   cudaMalloc((void**)&domain->lzetam, domElems * sizeof(Index_t));
+   cudaMalloc((void**)&domain->lzetap, domElems * sizeof(Index_t));
 
-   domain->elemBC.resize(domElems) ;  /* elem face symm/free-surf flag */
+   /* allocate elem face symm/free-surf flag */
+   cudaMalloc((void**)&domain->elemBC, domElems * sizeof(Int_t));
 
-   domain->e.resize(domElems) ;   /* energy */
-   domain->p.resize(domElems) ;   /* pressure */
+   /* allocate energy */
+   cudaMalloc((void**)&domain->e, domElems * sizeof(Real_t));
+   /* allocate pressure */
+   cudaMalloc((void**)&domain->p, domElems * sizeof(Real_t));
 
-   domain->q.resize(domElems) ;   /* q */
-   domain->ql.resize(domElems) ;  /* linear term for q */
-   domain->qq.resize(domElems) ;  /* quadratic term for q */
+   /* allocate q and related */
+   cudaMalloc((void**)&domain->q, domElems * sizeof(Real_t));
+   cudaMalloc((void**)&domain->ql, domElems * sizeof(Real_t));
+   cudaMalloc((void**)&domain->qq, domElems * sizeof(Real_t));
 
-   domain->v.resize(domElems) ;     /* relative volume */
+   /* allocate relative volume */
+   cudaMalloc((void**)&domain->v, domElems * sizeof(Real_t));
 
-   domain->volo.resize(domElems) ;  /* reference volume */
-   domain->delv.resize(domElems) ;  /* m_vnew - m_v */
-   domain->vdov.resize(domElems) ;  /* volume derivative over volume */
+   /* allocate volumes */
+   cudaMalloc((void**)&domain->volo, domElems * sizeof(Real_t));
+   cudaMalloc((void**)&domain->delv, domElems * sizeof(Real_t));
+   cudaMalloc((void**)&domain->vdov, domElems * sizeof(Real_t));
 
-   domain->arealg.resize(domElems) ;  /* elem characteristic length */
+   /* allocate elem characteristic length */
+   cudaMalloc((void**)&domain->arealg, domElems * sizeof(Real_t));
 
-   domain->ss.resize(domElems) ;      /* "sound speed" */
+   /* allocate sound speed */
+   cudaMalloc((void**)&domain->ss, domElems * sizeof(Real_t));
 
-   domain->elemMass.resize(domElems) ;  /* mass */
-
+   /* allocate mass */
+   cudaMalloc((void**)&domain->elemMass, domElems * sizeof(Real_t));
 }
 
 void AllocateSymmX(Domain* domain, size_t size)
@@ -81,11 +93,11 @@ void InitializeFields(Domain* domain)
  /* Basic Field Initialization */
 
  // Use MimicFill instead of thrust::fill for better stream control
- MimicFill(domain->ss.raw(), domain->ss.size(), Real_t(0.), domain->streams[0]);
- MimicFill(domain->e.raw(), domain->e.size(), Real_t(0.), domain->streams[0]);
- MimicFill(domain->p.raw(), domain->p.size(), Real_t(0.), domain->streams[0]);
- MimicFill(domain->q.raw(), domain->q.size(), Real_t(0.), domain->streams[0]);
- MimicFill(domain->v.raw(), domain->v.size(), Real_t(1.), domain->streams[0]);
+ MimicFill(domain->ss, domain->numElem, Real_t(0.), domain->streams[0]);
+ MimicFill(domain->e, domain->numElem, Real_t(0.), domain->streams[0]);
+ MimicFill(domain->p, domain->numElem, Real_t(0.), domain->streams[0]);
+ MimicFill(domain->q, domain->numElem, Real_t(0.), domain->streams[0]);
+ MimicFill(domain->v, domain->numElem, Real_t(1.), domain->streams[0]);
 
  MimicFill(domain->xd.raw(), domain->xd.size(), Real_t(0.), domain->streams[0]);
  MimicFill(domain->yd.raw(), domain->yd.size(), Real_t(0.), domain->streams[0]);
@@ -303,13 +315,14 @@ void SetupConnectivityBC(Domain *domain, int edgeElems)
     }
   }
 
-  domain->elemBC = elemBC_h;
-  domain->lxim = lxim_h;
-  domain->lxip = lxip_h;
-  domain->letam = letam_h;
-  domain->letap = letap_h;
-  domain->lzetam = lzetam_h;
-  domain->lzetap = lzetap_h;
+  // Copy to device
+  cudaMemcpy(domain->elemBC, elemBC_h.raw(), domElems * sizeof(Int_t), cudaMemcpyHostToDevice);
+  cudaMemcpy(domain->lxim, lxim_h.raw(), domElems * sizeof(Index_t), cudaMemcpyHostToDevice);
+  cudaMemcpy(domain->lxip, lxip_h.raw(), domElems * sizeof(Index_t), cudaMemcpyHostToDevice);
+  cudaMemcpy(domain->letam, letam_h.raw(), domElems * sizeof(Index_t), cudaMemcpyHostToDevice);
+  cudaMemcpy(domain->letap, letap_h.raw(), domElems * sizeof(Index_t), cudaMemcpyHostToDevice);
+  cudaMemcpy(domain->lzetam, lzetam_h.raw(), domElems * sizeof(Index_t), cudaMemcpyHostToDevice);
+  cudaMemcpy(domain->lzetap, lzetap_h.raw(), domElems * sizeof(Index_t), cudaMemcpyHostToDevice);
 }
 
 void Domain::BuildMesh(Int_t nx, Int_t edgeNodes, Int_t edgeElems, Int_t domNodes, Int_t padded_domElems, Vector_h<Real_t> &x_h, Vector_h<Real_t> &y_h, Vector_h<Real_t> &z_h, Vector_h<Int_t> &nodelist_h)
@@ -370,7 +383,8 @@ void Domain::BuildMesh(Int_t nx, Int_t edgeNodes, Int_t edgeElems, Int_t domNode
     nidx += edgeNodes ;
   }
 
-  nodelist = nodelist_h;
+  // Copy nodelist to device
+  cudaMemcpy(this->nodelist, nodelist_h.raw(), 8 * padded_domElems * sizeof(Index_t), cudaMemcpyHostToDevice);
 }
 void Domain::CreateRegionIndexSets(Int_t nr, Int_t b, Int_t tileID=0)
 {
@@ -378,12 +392,17 @@ void Domain::CreateRegionIndexSets(Int_t nr, Int_t b, Int_t tileID=0)
    Index_t myRank;
    myRank=tileID;
    srand(myRank);
+   printf("DEBUG: Creating region index sets for tile ID %d\n", tileID);
 #else
    srand(0);
    Index_t myRank = 0;
+   printf("DEBUG: Creating region index sets for single domain\n");
 #endif
+   fflush(stdout);
    numReg = nr;
    balance = b;
+   printf("DEBUG: Setting up %d regions with balance factor %d\n", numReg, balance);
+   fflush(stdout);
 
    regElemSize = new Int_t[numReg];
    Index_t nextIndex = 0;
@@ -508,6 +527,13 @@ void Domain::CreateRegionIndexSets(Int_t nr, Int_t b, Int_t tileID=0)
    regNumList =  regNumList_h;    // Region number per domain element
    regElemlist = regElemlist_h;  // region indexset 
    regSorted = regSorted_h; // keeps index of sorted regions
+   
+   printf("DEBUG: Region setup complete, created %d regions\n", numReg);
+   for (Int_t i=0; i<numReg; i++) {
+     printf("DEBUG: Region %d has %d elements and repetition count %d\n", 
+            i, regElemSize[i], regReps_h[i]);
+   }
+   fflush(stdout);
 
 } // end of create function
 void Domain::sortRegions(Vector_h<Int_t>& regReps_h, Vector_h<Index_t>& regSorted_h)
@@ -517,6 +543,9 @@ void Domain::sortRegions(Vector_h<Int_t>& regReps_h, Vector_h<Index_t>& regSorte
   regIndex.resize(numReg);
   for(int i = 0; i < numReg; i++)
 	regIndex[i] = i;
+    
+  printf("DEBUG: Sorting regions by repetition count\n");
+  fflush(stdout);
 
   for(int i = 0; i < numReg-1; i++)
 	for(int j = 0; j < numReg-i-1; j++)
@@ -536,11 +565,17 @@ void Domain::sortRegions(Vector_h<Int_t>& regReps_h, Vector_h<Index_t>& regSorte
 		}
   for(int i = 0; i < numReg; i++)
         regSorted_h[regIndex[i]] = i;
+        
+  printf("DEBUG: Region sorting complete\n");
+  fflush(stdout);
 }
 ///////////////////////////////////////////////////////////////////////////
 void InitMeshDecomp(Int_t numRanks, Int_t myRank,
                     Int_t *col, Int_t *row, Int_t *plane, Int_t *side)
 {
+   printf("DEBUG: InitMeshDecomp - numRanks=%d, myRank=%d\n", numRanks, myRank);
+   fflush(stdout);
+   
    Int_t testProcs;
    Int_t dx, dy, dz;
    Int_t myDom;
@@ -581,6 +616,10 @@ void InitMeshDecomp(Int_t numRanks, Int_t myRank,
    *row = (myDom / dx) % dy ;
    *plane = myDom / (dx*dy) ;
    *side = testProcs;
+   
+   printf("DEBUG: Domain decomposition complete: col=%d, row=%d, plane=%d, side=%d\n", 
+          *col, *row, *plane, *side);
+   fflush(stdout);
 
    return;
 }
@@ -590,20 +629,53 @@ Domain *NewDomain(char* argv[], Int_t numRanks, Index_t colLoc,
                Index_t rowLoc, Index_t planeLoc,
                Index_t nx, int tp, bool structured, Int_t nr, Int_t balance, Int_t cost)
 {
+  printf("DEBUG: NewDomain - Starting with nx=%d, tp=%d\n", nx, tp);
+  fflush(stdout);
 
-  Domain *domain = new Domain ;
+  Domain *domain = new Domain;
+  if (domain == nullptr) {
+    printf("ERROR: Failed to allocate Domain object\n");
+    fflush(stdout);
+    return nullptr;
+  }
+  printf("DEBUG: Domain allocated at %p\n", domain);
+  fflush(stdout);
 
   domain->max_streams = 3;  // Use 3 streams: 0 and 1 for computation, 2 for communication
-  domain->streams.resize(domain->max_streams);
-
-  // Make stream[0] the default stream (NULL)
-  domain->streams[0] = NULL;
+  printf("DEBUG: Setting up %d CUDA streams\n", domain->max_streams);
+  fflush(stdout);
   
-  // Create other streams (1 and 2)
-  for (Int_t i=1; i<domain->max_streams; i++)
-    cudaStreamCreate(&(domain->streams[i]));
+  try {
+    domain->streams.resize(domain->max_streams);
+    printf("DEBUG: Streams vector resized successfully\n");
+    fflush(stdout);
+
+    // Make stream[0] the default stream (NULL)
+    domain->streams[0] = NULL;
+    
+    // Create other streams (1 and 2)
+    for (Int_t i=1; i<domain->max_streams; i++) {
+      printf("DEBUG: Creating stream %d\n", i);
+      fflush(stdout);
+      cudaError_t err = cudaStreamCreate(&(domain->streams[i]));
+      if (err != cudaSuccess) {
+        printf("ERROR: Failed to create CUDA stream %d: %s\n", i, cudaGetErrorString(err));
+        fflush(stdout);
+      }
+    }
+    printf("DEBUG: All streams created successfully\n");
+    fflush(stdout);
+  } catch (std::exception& e) {
+    printf("ERROR: Exception in stream setup: %s\n", e.what());
+    fflush(stdout);
+  } catch (...) {
+    printf("ERROR: Unknown exception in stream setup\n");
+    fflush(stdout);
+  }
 
   cudaEventCreateWithFlags(&domain->time_constraint_computed,cudaEventDisableTiming);
+  printf("DEBUG: CUDA event created\n");
+  fflush(stdout);
 
   Index_t domElems;
   Index_t domNodes;
@@ -622,6 +694,10 @@ Domain *NewDomain(char* argv[], Int_t numRanks, Index_t colLoc,
     domain->m_colLoc   =   colLoc ;
     domain->m_rowLoc   =   rowLoc ;
     domain->m_planeLoc = planeLoc ;
+    
+    printf("DEBUG: Domain location - col=%d, row=%d, plane=%d, tp=%d\n", 
+           domain->m_colLoc, domain->m_rowLoc, domain->m_planeLoc, domain->m_tp);
+    fflush(stdout);
 
     Index_t edgeElems = nx ;
     Index_t edgeNodes = edgeElems+1 ;
@@ -635,6 +711,10 @@ Domain *NewDomain(char* argv[], Int_t numRanks, Index_t colLoc,
 
     domain->numNode = (domain->sizeX+1)*(domain->sizeY+1)*(domain->sizeZ+1) ;
     domain->padded_numNode = PAD(domain->numNode,32);
+    
+    printf("DEBUG: Domain sizes - X=%d, Y=%d, Z=%d, numElem=%d, numNode=%d\n", 
+           domain->sizeX, domain->sizeY, domain->sizeZ, domain->numElem, domain->numNode);
+    fflush(stdout);
 
     domElems = domain->numElem ;
     domNodes = domain->numNode ;
@@ -644,10 +724,16 @@ Domain *NewDomain(char* argv[], Int_t numRanks, Index_t colLoc,
     AllocateNodalPersistent(domain,domNodes);
 
     domain->SetupCommBuffers(edgeNodes);
+    printf("DEBUG: Communication buffers set up\n");
+    fflush(stdout);
 
     InitializeFields(domain);
+    printf("DEBUG: Fields initialized\n");
+    fflush(stdout);
 
     domain->BuildMesh(nx, edgeNodes, edgeElems, domNodes, padded_domElems, x_h, y_h, z_h, nodelist_h);
+    printf("DEBUG: Mesh built\n");
+    fflush(stdout);
 
     domain->numSymmX = domain->numSymmY = domain->numSymmZ = 0;
 
@@ -692,8 +778,14 @@ Domain *NewDomain(char* argv[], Int_t numRanks, Index_t colLoc,
       domain->symmY = symmY_h;
     if (domain->m_colLoc == 0)
       domain->symmX = symmX_h;
+      
+    printf("DEBUG: Symmetry nodesets set up: X=%d, Y=%d, Z=%d\n", 
+           domain->numSymmX, domain->numSymmY, domain->numSymmZ);
+    fflush(stdout);
 
     SetupConnectivityBC(domain, edgeElems);
+    printf("DEBUG: Connectivity and boundary conditions set up\n");
+    fflush(stdout);
   }
   else
   {
@@ -747,7 +839,8 @@ Domain *NewDomain(char* argv[], Int_t numRanks, Index_t colLoc,
           nodelist_h[ni*padded_domElems+zidx] = Index_t(n);
        }
     }
-    domain->nodelist = nodelist_h;
+    // Copy nodelist to device
+    cudaMemcpy(domain->nodelist, nodelist_h.raw(), 8 * padded_domElems * sizeof(Index_t), cudaMemcpyHostToDevice);
 
     /* set up face-based element neighbors */
     Vector_h<Index_t> lxim_h(domElems);
@@ -770,12 +863,13 @@ Domain *NewDomain(char* argv[], Int_t numRanks, Index_t colLoc,
        lzetap_h[i] = Index_t(zeta_p) ;
     }
 
-    domain->lxim = lxim_h;
-    domain->lxip = lxip_h;
-    domain->letam = letam_h;
-    domain->letap = letap_h;
-    domain->lzetam = lzetam_h;
-    domain->lzetap = lzetap_h;
+    // Copy connectivity data to device
+    cudaMemcpy(domain->lxim, lxim_h.raw(), domElems * sizeof(Index_t), cudaMemcpyHostToDevice);
+    cudaMemcpy(domain->lxip, lxip_h.raw(), domElems * sizeof(Index_t), cudaMemcpyHostToDevice);
+    cudaMemcpy(domain->letam, letam_h.raw(), domElems * sizeof(Index_t), cudaMemcpyHostToDevice);
+    cudaMemcpy(domain->letap, letap_h.raw(), domElems * sizeof(Index_t), cudaMemcpyHostToDevice);
+    cudaMemcpy(domain->lzetam, lzetam_h.raw(), domElems * sizeof(Index_t), cudaMemcpyHostToDevice);
+    cudaMemcpy(domain->lzetap, lzetap_h.raw(), domElems * sizeof(Index_t), cudaMemcpyHostToDevice);
 
     /* set up X symmetry nodeset */
 
@@ -887,14 +981,20 @@ Domain *NewDomain(char* argv[], Int_t numRanks, Index_t colLoc,
       if ((mask & 0x66) == 0x66) elemBC_h[zidx] |= XI_P_SYMM ;
     }
 
-    domain->elemBC = elemBC_h;
+    // Copy boundary condition info to device
+    cudaMemcpy(domain->elemBC, elemBC_h.raw(), domElems * sizeof(Int_t), cudaMemcpyHostToDevice);
 
     /* deposit energy */
-    domain->e[domain->octantCorner] = Real_t(3.948746e+7) ;
+    // Deposit energy
+    Real_t energy = Real_t(3.948746e+7);
+    cudaMemcpy(&domain->e[domain->octantCorner], &energy, sizeof(Real_t), cudaMemcpyHostToDevice);
 
   }
 
   /* set up node-centered indexing of elements */
+  printf("DEBUG: Setting up node-centered indexing of elements\n");
+  fflush(stdout);
+  
   Vector_h<Index_t> nodeElemCount_h(domNodes);
 
   for (Index_t i=0; i<domNodes; ++i) {
@@ -908,6 +1008,8 @@ Domain *NewDomain(char* argv[], Int_t numRanks, Index_t colLoc,
   }
 
   Vector_h<Index_t> nodeElemStart_h(domNodes);
+  printf("DEBUG: Calculating node element start indices\n");
+  fflush(stdout);
 
   nodeElemStart_h[0] = 0;
   for (Index_t i=1; i < domNodes; ++i) {
@@ -915,13 +1017,22 @@ Domain *NewDomain(char* argv[], Int_t numRanks, Index_t colLoc,
         nodeElemStart_h[i-1] + nodeElemCount_h[i-1] ;
   }
   
-  Vector_h<Index_t> nodeElemCornerList_h(nodeElemStart_h[domNodes-1] +
-                 nodeElemCount_h[domNodes-1] );
+  printf("DEBUG: Last node element start index: %d\n", nodeElemStart_h[domNodes-1]);
+  fflush(stdout);
+  
+  Index_t cornerListSize = nodeElemStart_h[domNodes-1] + nodeElemCount_h[domNodes-1];
+  printf("DEBUG: Creating nodeElemCornerList with size %d\n", cornerListSize);
+  fflush(stdout);
+  
+  Vector_h<Index_t> nodeElemCornerList_h(cornerListSize);
 
   for (Index_t i=0; i < domNodes; ++i) {
      nodeElemCount_h[i] = 0;
   }
 
+  printf("DEBUG: Building node element corner list\n");
+  fflush(stdout);
+  
   for (Index_t j=0; j < 8; ++j) {
     for (Index_t i=0; i < domElems; ++i) {
         Index_t m = nodelist_h[padded_domElems*j+i];
@@ -932,29 +1043,49 @@ Domain *NewDomain(char* argv[], Int_t numRanks, Index_t colLoc,
         ++(nodeElemCount_h[m]) ;
      }
   }
+  
+  printf("DEBUG: Node element corner list built\n");
+  fflush(stdout);
 
   Index_t clSize = nodeElemStart_h[domNodes-1] +
                    nodeElemCount_h[domNodes-1] ;
+  printf("DEBUG: Verifying node element corner list entries, size=%d\n", clSize);
+  fflush(stdout);
+  
   for (Index_t i=0; i < clSize; ++i) {
      Index_t clv = nodeElemCornerList_h[i] ;
      if ((clv < 0) || (clv > padded_domElems*8)) {
           fprintf(stderr,
-   "AllocateNodeElemIndexes(): nodeElemCornerList entry out of range!\n");
+   "AllocateNodeElemIndexes(): nodeElemCornerList entry out of range! Entry %d = %d\n", i, clv);
+          fflush(stderr);
           exit(1);
      }
   }
+  
+  printf("DEBUG: Node element corner list verified\n");
+  fflush(stdout);
 
   domain->nodeElemStart = nodeElemStart_h;
   domain->nodeElemCount = nodeElemCount_h;
   domain->nodeElemCornerList = nodeElemCornerList_h;
+  printf("DEBUG: Node element indexing data transferred to device\n");
+  fflush(stdout);
 
   /* Create a material IndexSet (entire domain same material for now) */
+  printf("DEBUG: Creating material index set\n");
+  fflush(stdout);
+  
   Vector_h<Index_t> matElemlist_h(domElems);
   for (Index_t i=0; i<domElems; ++i) {
      matElemlist_h[i] = i ;
   }
-  domain->matElemlist = matElemlist_h;
+  // Copy matElemlist to device
+  cudaMemcpy(domain->matElemlist, matElemlist_h.raw(), domElems * sizeof(Index_t), cudaMemcpyHostToDevice);
+  printf("DEBUG: Material index set transferred to device\n");
+  fflush(stdout);
 
+  printf("DEBUG: Allocating pinned host memory for timestep and error tracking\n");
+  fflush(stdout);
   cudaMallocHost(&domain->dtcourant_h,sizeof(Real_t),0);
   cudaMallocHost(&domain->dthydro_h,sizeof(Real_t),0);
   cudaMallocHost(&domain->bad_vol_h,sizeof(Index_t),0);
@@ -964,8 +1095,12 @@ Domain *NewDomain(char* argv[], Int_t numRanks, Index_t colLoc,
   *(domain->bad_q_h)=-1;
   *(domain->dthydro_h)=1e20;
   *(domain->dtcourant_h)=1e20;
+  printf("DEBUG: Initialized error tracking variables\n");
+  fflush(stdout);
 
   /* initialize material parameters */
+  printf("DEBUG: Initializing material and simulation parameters\n");
+  fflush(stdout);
   domain->time_h      = Real_t(0.) ;
   domain->dtfixed = Real_t(-1.0e-6) ;
   domain->deltatimemultlb = Real_t(1.1) ;
@@ -999,12 +1134,19 @@ Domain *NewDomain(char* argv[], Int_t numRanks, Index_t colLoc,
   domain->eosvmin =  Real_t(1.0e-9) ;
 
   domain->refdens =  Real_t(1.0) ;
+  printf("DEBUG: Material and simulation parameters initialized\n");
+  fflush(stdout);
 
   /* initialize field data */
+  printf("DEBUG: Initializing field data (nodalMass, volo, elemMass)\n");
+  fflush(stdout);
   Vector_h<Real_t> nodalMass_h(domNodes);
   Vector_h<Real_t> volo_h(domElems);
   Vector_h<Real_t> elemMass_h(domElems);
 
+  printf("DEBUG: Calculating element volumes and masses\n");
+  fflush(stdout);
+  
   for (Index_t i=0; i<domElems; ++i) {
      Real_t x_local[8], y_local[8], z_local[8] ;
      for( Index_t lnode=0 ; lnode<8 ; ++lnode )
@@ -1025,9 +1167,25 @@ Domain *NewDomain(char* argv[], Int_t numRanks, Index_t colLoc,
      }
   }
 
+  domain->h_nodalMass = nodalMass_h;
   domain->nodalMass = nodalMass_h;
-  domain->volo = volo_h;
-  domain->elemMass= elemMass_h;
+  // Copy volumetric data to device
+  cudaMemcpy(domain->volo, volo_h.raw(), domElems * sizeof(Real_t), cudaMemcpyHostToDevice);
+  cudaMemcpy(domain->elemMass, elemMass_h.raw(), domElems * sizeof(Real_t), cudaMemcpyHostToDevice);
+  
+  printf("DEBUG: Volumetric and mass data transferred to device\n");
+  printf("DEBUG: First element volume (volo_h[0]): %e, Total nodal mass: %e\n", 
+         volo_h[0], std::accumulate(nodalMass_h.raw(), nodalMass_h.raw() + domNodes, 0.0));
+  
+  // Verify device transfer for volo
+  Real_t checkVolo;
+  cudaError_t err = cudaMemcpy(&checkVolo, domain->volo, sizeof(Real_t), cudaMemcpyDeviceToHost);
+  if (err != cudaSuccess) {
+    printf("ERROR: Failed to read back volo[0] from device: %s\n", cudaGetErrorString(err));
+  } else {
+    printf("DEBUG: Verification - volo[0] on device = %e\n", checkVolo);
+  }
+  fflush(stdout);
 
    /* deposit energy */
    domain->octantCorner = 0;
@@ -1037,15 +1195,32 @@ Domain *NewDomain(char* argv[], Int_t numRanks, Index_t colLoc,
   const Real_t ebase = 3.948746e+7;
   Real_t scale = (nx*domain->m_tp)/45.0;
   Real_t einit = ebase*scale*scale*scale;
+  printf("DEBUG: Calculating initial energy deposit, scale=%f, einit=%e\n", scale, einit);
+  fflush(stdout);
+  
   //Real_t einit = ebase;
   if (domain->m_rowLoc + domain->m_colLoc + domain->m_planeLoc == 0) {
      // Dump into the first zone (which we know is in the corner)
      // of the domain that sits at the origin
-       domain->e[0] = einit;
+       Real_t energy = einit;
+       cudaMemcpy(&domain->e[0], &energy, sizeof(Real_t), cudaMemcpyHostToDevice);
+       printf("DEBUG: Energy deposited into corner element at origin\n");
+       fflush(stdout);
+  } else {
+       printf("DEBUG: No energy deposited in this domain (not at origin)\n");
+       fflush(stdout);
   }
 
   //set initial deltatime base on analytic CFL calculation
-  domain->deltatime_h = (.5*cbrt(domain->volo[0]))/sqrt(2*einit);
+  // Get volo[0] value from device for debugging
+  Real_t firstVolo;
+  cudaMemcpy(&firstVolo, domain->volo, sizeof(Real_t), cudaMemcpyDeviceToHost);
+  printf("DEBUG: First element reference volume (volo[0]) = %e\n", firstVolo);
+  fflush(stdout);
+  
+  domain->deltatime_h = (.5*cbrt(firstVolo))/sqrt(2*einit);
+  printf("DEBUG: Initial deltatime set to %e\n", domain->deltatime_h);
+  fflush(stdout);
 
   domain->cost = cost;
   domain->regNumList.resize(domain->numElem) ;  // material indexset
@@ -1053,12 +1228,19 @@ Domain *NewDomain(char* argv[], Int_t numRanks, Index_t colLoc,
   domain->regCSR.resize(nr);
   domain->regReps.resize(nr);
   domain->regSorted.resize(nr);
+  
+  printf("DEBUG: Region vectors initialized, preparing to create region index sets\n");
+  fflush(stdout);
 
   // Setup region index sets. For now, these are constant sized
   // throughout the run, but could be changed every cycle to 
   // simulate effects of ALE on the lagrange solver
 
   domain->CreateRegionIndexSets(nr, balance);
+  printf("DEBUG: Region index sets created\n");
+  fflush(stdout);
 
+  printf("DEBUG: Domain initialization complete\n");
+  fflush(stdout);
   return domain ;
 }

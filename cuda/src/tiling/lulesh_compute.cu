@@ -102,14 +102,14 @@ void CalcVolumeForceForElems(const Real_t hgcoef,Domain *domain)
     if (hourg_gt_zero)
     {
       CalcVolumeForceForElems_kernel<true> <<<dimGrid,block_size,0,domain->streams[0]>>>
-      ( domain->volo.raw(), 
-        domain->v.raw(), 
-        domain->p.raw(), 
-        domain->q.raw(),
+      ( domain->volo, 
+        domain->v, 
+        domain->p, 
+        domain->q,
 	      hgcoef, numElem, padded_numElem,
-        domain->nodelist.raw(), 
-        domain->ss.raw(), 
-        domain->elemMass.raw(),
+        domain->nodelist, 
+        domain->ss, 
+        domain->elemMass,
         domain->x.raw(), domain->y.raw(), domain->z.raw(), domain->xd.raw(), domain->yd.raw(), domain->zd.raw(),
 #ifdef DOUBLE_PRECISION
         fx_elem->raw(), 
@@ -127,14 +127,14 @@ void CalcVolumeForceForElems(const Real_t hgcoef,Domain *domain)
     else
     {
       CalcVolumeForceForElems_kernel<false> <<<dimGrid,block_size,0,domain->streams[0]>>>
-      ( domain->volo.raw(),
-        domain->v.raw(), 
-        domain->p.raw(), 
-        domain->q.raw(),
+      ( domain->volo,
+        domain->v, 
+        domain->p, 
+        domain->q,
 	      hgcoef, numElem, padded_numElem,
-        domain->nodelist.raw(), 
-        domain->ss.raw(), 
-        domain->elemMass.raw(),
+        domain->nodelist, 
+        domain->ss, 
+        domain->elemMass,
         domain->x.raw(), domain->y.raw(), domain->z.raw(), domain->xd.raw(), domain->yd.raw(), domain->zd.raw(),
 #ifdef DOUBLE_PRECISION
         fx_elem->raw(), 
@@ -289,37 +289,79 @@ void CalcPositionAndVelocityForNodes(const Real_t u_cut, Domain* domain)
 
 void CalcKinematicsAndMonotonicQGradient(Domain *domain)
 {
+    printf("DEBUG: Inside CalcKinematicsAndMonotonicQGradient\n");
+    fflush(stdout);
+
     Index_t numElem = domain->numElem ;
     Index_t padded_numElem = domain->padded_numElem;
 
     int num_threads = numElem;
 
+    printf("DEBUG: Preparing kernel for %d elements (%d padded)\n", numElem, padded_numElem);
+    fflush(stdout);
+
     const int block_size = 64;
     int dimGrid = PAD_DIV(num_threads,block_size);
+    
+    printf("DEBUG: Launching kernel with %d blocks of %d threads each\n", dimGrid, block_size);
+    fflush(stdout);
+    
+    // Debugging - Check key pointers before kernel launch
+    if (domain->volo == nullptr) {
+        printf("ERROR: domain->volo is NULL inside CalcKinematicsAndMonotonicQGradient\n");
+        fflush(stdout);
+    }
+    
+    if (domain->vnew == nullptr) {
+        printf("ERROR: domain->vnew is NULL inside CalcKinematicsAndMonotonicQGradient\n");
+        fflush(stdout);
+    }
+    
+    // Read the first element of volo for debugging
+    Real_t firstVolo;
+    cudaError_t err = cudaMemcpy(&firstVolo, domain->volo, sizeof(Real_t), cudaMemcpyDeviceToHost);
+    if (err != cudaSuccess) {
+        printf("ERROR: Failed to read volo[0] inside CalcKinematicsAndMonotonicQGradient: %s\n", 
+               cudaGetErrorString(err));
+    } else {
+        printf("DEBUG: volo[0] = %e before kernel\n", firstVolo);
+    }
+    fflush(stdout);
 
     CalcKinematicsAndMonotonicQGradient_kernel<<<dimGrid,block_size,0,domain->streams[0]>>>
     (  numElem,padded_numElem, domain->deltatime_h, 
-       domain->nodelist.raw(),
-       domain->volo.raw(),
-       domain->v.raw(),
+       domain->nodelist,
+       domain->volo,
+       domain->v,
        domain->x.raw(), domain->y.raw(), domain->z.raw(), domain->xd.raw(), domain->yd.raw(), domain->zd.raw(),
-       domain->vnew->raw(),
-       domain->delv.raw(),
-       domain->arealg.raw(),
-       domain->dxx->raw(),
-       domain->dyy->raw(),
-       domain->dzz->raw(),
-       domain->vdov.raw(), 
-       domain->delx_zeta->raw(),
-       domain->delv_zeta->raw(), 
-       domain->delx_xi->raw(), 
-       domain->delv_xi->raw(),  
-       domain->delx_eta->raw(), 
-       domain->delv_eta->raw(),
+       domain->vnew,
+       domain->delv,
+       domain->arealg,
+       domain->dxx,
+       domain->dyy,
+       domain->dzz,
+       domain->vdov, 
+       domain->delx_zeta,
+       domain->delv_zeta, 
+       domain->delx_xi, 
+       domain->delv_xi,  
+       domain->delx_eta, 
+       domain->delv_eta,
        domain->bad_vol_h,
        num_threads  
     );
 
+    // Wait for the kernel to complete to check for errors
+    cudaError_t kernelError = cudaGetLastError();
+    if (kernelError != cudaSuccess) {
+        printf("ERROR: CalcKinematicsAndMonotonicQGradient kernel failed: %s\n", 
+               cudaGetErrorString(kernelError));
+        fflush(stdout);
+    } else {
+        printf("DEBUG: CalcKinematicsAndMonotonicQGradient kernel launched successfully\n");
+        fflush(stdout);
+    }
+    
     //cudaDeviceSynchronize();
     //cudaCheckError();
 }
@@ -328,6 +370,8 @@ void CalcKinematicsAndMonotonicQGradient(Domain *domain)
 
 void CalcMonotonicQRegionForElems(Domain *domain)
 {
+    printf("DEBUG: Inside CalcMonotonicQRegionForElems\n");
+    fflush(stdout);
 
     const Real_t ptiny        = Real_t(1.e-36) ;
     Real_t monoq_max_slope    = domain->monoq_max_slope ;
@@ -337,23 +381,57 @@ void CalcMonotonicQRegionForElems(Domain *domain)
     Real_t qqc_monoq = domain->qqc_monoq;
     Index_t elength = domain->numElem;
 
+    printf("DEBUG: Parameters - max_slope=%e, limiter_mult=%e, qlc_monoq=%e, qqc_monoq=%e\n", 
+           monoq_max_slope, monoq_limiter_mult, qlc_monoq, qqc_monoq);
+    fflush(stdout);
+
     Index_t dimBlock= 128;
     Index_t dimGrid = PAD_DIV(elength,dimBlock);
 
+    printf("DEBUG: Launching kernel with %d blocks of %d threads each\n", dimGrid, dimBlock);
+    fflush(stdout);
+    
+    // Check key pointers before kernel launch
+    if (domain->volo == nullptr) {
+        printf("ERROR: domain->volo is NULL inside CalcMonotonicQRegionForElems\n");
+        fflush(stdout);
+    }
+    
+    // Read the first element of volo for debugging
+    Real_t firstVolo;
+    cudaError_t err = cudaMemcpy(&firstVolo, domain->volo, sizeof(Real_t), cudaMemcpyDeviceToHost);
+    if (err != cudaSuccess) {
+        printf("ERROR: Failed to read volo[0] inside CalcMonotonicQRegionForElems: %s\n", 
+               cudaGetErrorString(err));
+    } else {
+        printf("DEBUG: volo[0] = %e before MonotonicQ kernel\n", firstVolo);
+    }
+    fflush(stdout);
+
     CalcMonotonicQRegionForElems_kernel<<<dimGrid,dimBlock,0,domain->streams[0]>>>
     ( qlc_monoq,qqc_monoq,monoq_limiter_mult,monoq_max_slope,ptiny,elength,
-      domain->regElemlist.raw(),domain->elemBC.raw(),
-      domain->lxim.raw(),domain->lxip.raw(),
-      domain->letam.raw(),domain->letap.raw(),
-      domain->lzetam.raw(),domain->lzetap.raw(),
-      domain->delv_xi->raw(),domain->delv_eta->raw(),domain->delv_zeta->raw(),
-      domain->delx_xi->raw(),domain->delx_eta->raw(),domain->delx_zeta->raw(),
-      domain->vdov.raw(),domain->elemMass.raw(),domain->volo.raw(),domain->vnew->raw(),
-      domain->qq.raw(),domain->ql.raw(), 
-      domain->q.raw(),
+      domain->regElemlist.raw(),domain->elemBC,
+      domain->lxim,domain->lxip,
+      domain->letam,domain->letap,
+      domain->lzetam,domain->lzetap,
+      domain->delv_xi,domain->delv_eta,domain->delv_zeta,
+      domain->delx_xi,domain->delx_eta,domain->delx_zeta,
+      domain->vdov,domain->elemMass,domain->volo,domain->vnew,
+      domain->qq,domain->ql, 
+      domain->q,
       domain->qstop,
       domain->bad_q_h
     );
+
+    // Check for kernel launch errors
+    cudaError_t kernelError = cudaGetLastError();
+    if (kernelError != cudaSuccess) {
+        printf("ERROR: CalcMonotonicQRegionForElems kernel failed: %s\n", 
+               cudaGetErrorString(kernelError));
+    } else {
+        printf("DEBUG: CalcMonotonicQRegionForElems kernel launched successfully\n");
+    }
+    fflush(stdout);
 
     //cudaDeviceSynchronize();
     //cudaCheckError();
@@ -366,34 +444,60 @@ void CalcMonotonicQRegionForElems(Domain *domain)
 
 void ApplyMaterialPropertiesAndUpdateVolume(Domain *domain)
 {
+  printf("DEBUG: Inside ApplyMaterialPropertiesAndUpdateVolume\n");
+  fflush(stdout);
+  
   Index_t length = domain->numElem ;
 
   if (length != 0) {
+    printf("DEBUG: Preparing to apply material properties for %d elements\n", length);
+    fflush(stdout);
 
     Index_t dimBlock = 128;
     Index_t dimGrid = PAD_DIV(length,dimBlock);
+    
+    printf("DEBUG: Launching kernel with %d blocks of %d threads each\n", dimGrid, dimBlock);
+    fflush(stdout);
+    
+    // Check key pointers before kernel launch
+    if (domain->volo == nullptr) {
+        printf("ERROR: domain->volo is NULL inside ApplyMaterialPropertiesAndUpdateVolume\n");
+        fflush(stdout);
+    }
+    
+    if (domain->vnew == nullptr) {
+        printf("ERROR: domain->vnew is NULL inside ApplyMaterialPropertiesAndUpdateVolume\n");
+        fflush(stdout);
+    }
+    
+    // Verify material parameters
+    printf("DEBUG: Material parameters - refdens=%e, e_cut=%e, emin=%e, pmin=%e, p_cut=%e, q_cut=%e\n",
+           domain->refdens, domain->e_cut, domain->emin, domain->pmin, domain->p_cut, domain->q_cut);
+    printf("DEBUG: Volume parameters - eosvmin=%e, eosvmax=%e, v_cut=%e\n",
+           domain->eosvmin, domain->eosvmax, domain->v_cut);
+    fflush(stdout);
 
     ApplyMaterialPropertiesAndUpdateVolume_kernel<<<dimGrid,dimBlock,0,domain->streams[0]>>>
         (length,
          domain->refdens,
          domain->e_cut,
          domain->emin,
-         domain->ql.raw(),
-         domain->qq.raw(),
-         domain->vnew->raw(),
-         domain->v.raw(),
+         domain->ql,
+         domain->qq,
+         domain->vnew,
+         domain->v,
          domain->pmin,
          domain->p_cut,
          domain->q_cut,
          domain->eosvmin,
          domain->eosvmax,
          domain->regElemlist.raw(),
-         domain->e.raw(),
-         domain->delv.raw(),
-         domain->p.raw(),
-         domain->q.raw(),
+         domain->e,
+         domain->delv,
+         domain->p,
+         domain->q,
          domain->ss4o3,
-         domain->ss.raw(),
+         domain->ss,
          domain->v_cut,
          domain->bad_vol_h,
 	 domain->cost,
@@ -402,8 +506,21 @@ void ApplyMaterialPropertiesAndUpdateVolume(Domain *domain)
 	 domain->numReg
          );
 
+    // Check for kernel launch errors
+    cudaError_t kernelError = cudaGetLastError();
+    if (kernelError != cudaSuccess) {
+        printf("ERROR: ApplyMaterialPropertiesAndUpdateVolume kernel failed: %s\n", 
+               cudaGetErrorString(kernelError));
+    } else {
+        printf("DEBUG: ApplyMaterialPropertiesAndUpdateVolume kernel launched successfully\n");
+    }
+    fflush(stdout);
+
     //cudaDeviceSynchronize();
     //cudaCheckError();
+  } else {
+    printf("DEBUG: No elements to process in ApplyMaterialPropertiesAndUpdateVolume\n");
+    fflush(stdout);
   }
 }
 
@@ -450,7 +567,7 @@ void CalcTimeConstraintsForElems(Domain* domain)
     // Each block processes a portion of the elements and finds local minimums
     CalcTimeConstraintsForElems_kernel<dimBlock> <<<dimGrid, dimBlock,0,domain->streams[0]>>>
         (length, qqc2, dvovmax,
-         domain->matElemlist.raw(), domain->ss.raw(), domain->vdov.raw(), domain->arealg.raw(),
+         domain->matElemlist, domain->ss, domain->vdov, domain->arealg,
          dev_mindtcourant->raw(), dev_mindthydro->raw());
 
     // TODO: if dimGrid < 1024, should launch less threads

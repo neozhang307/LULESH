@@ -99,28 +99,38 @@ public:
      * @return true if successful, false otherwise
      */
     bool initializeDomains(char* args[], Index_t problemSize, bool structured, Int_t nr, Int_t balance, Int_t cost) {
+        printf("DEBUG: DomainGroup::initializeDomains - Starting\n");
+        fflush(stdout);
         // For the tiled domains, numRanks is the total number of tiles
         Int_t virtualNumRanks = numTiles;
         
         // Calculate size per tile (assuming uniform distribution)
         Index_t elementsPerTile = problemSize / tilesX;
+        printf("DEBUG: Problem size=%d, tiles=%d, elementsPerTile=%d\n", 
+               problemSize, tilesX, elementsPerTile);
         
         // Initialize each domain
         int virtualRank = 0;
         for (Index_t z = 0; z < tilesZ; ++z) {
             for (Index_t y = 0; y < tilesY; ++y) {
                 for (Index_t x = 0; x < tilesX; ++x) {
+                    printf("DEBUG: Initializing domain (%d,%d,%d)\n", x, y, z);
                     // Calculate position for this domain as if it were an MPI rank
                     Int_t col, row, plane, side;
                     
                     // Handle the decomposition internally - each tile gets its own virtual rank
                     InitMeshDecomp(virtualNumRanks, virtualRank, &col, &row, &plane, &side);
+                    printf("DEBUG: Mesh decomposition: virtualRank=%d, col=%d, row=%d, plane=%d, side=%d\n", virtualNumRanks,
+                           col, row, plane, side);
                     
                     // Create new domain with appropriate parameters
+                    printf("DEBUG: Calling NewDomain for domain (%d,%d,%d)\n", x, y, z);
                     Domain* domain = NewDomain(args, virtualNumRanks, 
                                               col, row, plane,      // position based on virtual rank
                                               elementsPerTile, side, // domain size and tp value
                                               structured, nr, balance, cost);
+                    
+                    printf("DEBUG: Domain (%d,%d,%d) created, ptr=%p\n", x, y, z, domain);
                     
                     // Store the domain
                     setDomain(x, y, z, domain);

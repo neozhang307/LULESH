@@ -81,52 +81,52 @@ public:
 
   /* Elem-centered */
 
-  Vector_d<Index_t> matElemlist ; /* material indexset */
-  Vector_d<Index_t> nodelist ;    /* elemToNode connectivity */
+  Index_t* matElemlist ; /* material indexset */
+  Index_t*nodelist ;    /* elemToNode connectivity */
 
-  Vector_d<Index_t> lxim ;        /* element connectivity through face */
-  Vector_d<Index_t> lxip ;
-  Vector_d<Index_t> letam ;
-  Vector_d<Index_t> letap ;
-  Vector_d<Index_t> lzetam ;
-  Vector_d<Index_t> lzetap ;
+  Index_t* lxim ;        /* element connectivity through face */
+  Index_t* lxip ;
+  Index_t* letam ;
+  Index_t* letap ;
+  Index_t* lzetam ;
+  Index_t* lzetap ;
 
-  Vector_d<Int_t> elemBC ;        /* elem face symm/free-surf flag */
+  Int_t* elemBC ;        /* elem face symm/free-surf flag */
 
-  Vector_d<Real_t> e ;            /* energy */
+  Real_t* e ;            /* energy */
 
-  Vector_d<Real_t> p ;            /* pressure */
+  Real_t* p ;            /* pressure */
 
-  Vector_d<Real_t> q ;            /* q */
-  Vector_d<Real_t> ql ;           /* linear term for q */
-  Vector_d<Real_t> qq ;           /* quadratic term for q */
+  Real_t* q ;            /* q */
+  Real_t* ql ;           /* linear term for q */
+  Real_t* qq ;           /* quadratic term for q */
 
-  Vector_d<Real_t> v ;            /* relative volume */
+  Real_t* v ;            /* relative volume */
 
-  Vector_d<Real_t> volo ;         /* reference volume */
-  Vector_d<Real_t> delv ;         /* m_vnew - m_v */
-  Vector_d<Real_t> vdov ;         /* volume derivative over volume */
+  Real_t* volo ;         /* reference volume */
+  Real_t* delv ;         /* m_vnew - m_v */
+  Real_t* vdov ;         /* volume derivative over volume */
 
-  Vector_d<Real_t> arealg ;       /* char length of an element */
+  Real_t* arealg ;       /* char length of an element */
   
-  Vector_d<Real_t> ss ;           /* "sound speed" */
+  Real_t* ss ;           /* "sound speed" */
 
-  Vector_d<Real_t> elemMass ;     /* mass */
+  Real_t* elemMass ;     /* mass */
+/******************************************************** */
+  Real_t* vnew ;         /* new relative volume -- temporary */
 
-  Vector_d<Real_t>* vnew ;         /* new relative volume -- temporary */
+  Real_t* delv_xi ;      /* velocity gradient -- temporary */
+  Real_t* delv_eta ;
+  Real_t* delv_zeta ;
 
-  Vector_d<Real_t>* delv_xi ;      /* velocity gradient -- temporary */
-  Vector_d<Real_t>* delv_eta ;
-  Vector_d<Real_t>* delv_zeta ;
+  Real_t* delx_xi ;      /* coordinate gradient -- temporary */
+  Real_t* delx_eta ;
+  Real_t* delx_zeta ;
 
-  Vector_d<Real_t>* delx_xi ;      /* coordinate gradient -- temporary */
-  Vector_d<Real_t>* delx_eta ;
-  Vector_d<Real_t>* delx_zeta ;
-
-  Vector_d<Real_t>* dxx ;          /* principal strains -- temporary */
-  Vector_d<Real_t>* dyy ;
-  Vector_d<Real_t>* dzz ;
-
+  Real_t* dxx ;          /* principal strains -- temporary */
+  Real_t* dyy ;
+  Real_t* dzz ;
+/******************************************************** */
   /* Node-centered */
 
   Vector_d<Real_t> x ;            /* coordinates */
