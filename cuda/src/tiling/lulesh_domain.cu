@@ -1,7 +1,7 @@
 #include "lulesh_split.h"
 #include <utility/util.h>
 #include <utility/sm_utils.inl>
-#include <utility/allocator.h>
+// #include <utility/allocator.h>
 #include "tiling_utils.h"
 #include <numeric> // For std::accumulate
 

@@ -16,12 +16,9 @@ release: tiled_lulesh
 debug: tiled_lulesh
 
 # Main target - the tiled LULESH executable
-tiled_lulesh: allocator.o lulesh_main.o lulesh_compute.o lulesh_compute_base.o lulesh_domain.o lulesh_comms.o lulesh_comms_gpu.o
-	$(NVCC) $(LINKFLAGS) allocator.o lulesh_main.o lulesh_compute.o lulesh_compute_base.o lulesh_domain.o lulesh_comms.o lulesh_comms_gpu.o -o tiled_lulesh
+tiled_lulesh:  lulesh_main.o lulesh_compute.o lulesh_compute_base.o lulesh_domain.o lulesh_comms.o lulesh_comms_gpu.o
+	$(NVCC) $(LINKFLAGS)  lulesh_main.o lulesh_compute.o lulesh_compute_base.o lulesh_domain.o lulesh_comms.o lulesh_comms_gpu.o -o tiled_lulesh
 
-# Utility files
-allocator.o: ../src/utility/allocator.cu ../src/utility/vector.h
-	$(NVCC) $(FLAGS) ../src/utility/allocator.cu -I../src/ -I../src/utility/ -c -o allocator.o
 
 # Tiling implementation files
 lulesh_main.o: ../src/tiling/lulesh_main.cu ../src/tiling/lulesh_split.h ../src/tiling/lulesh_domain_groups.h ../src/utility/util.h ../src/utility/vector.h ../src/utility/allocator.h
@@ -45,4 +42,4 @@ lulesh_comms_gpu.o: ../src/tiling/lulesh-comms-gpu.cu
 
 # Clean up all object files and executables
 clean: 
-	rm -rf allocator.o lulesh_main.o lulesh_compute.o lulesh_compute_base.o lulesh_domain.o lulesh_comms.o lulesh_comms_gpu.o tiled_lulesh xyz.asc regNumList.txt
+	rm -rf lulesh_main.o lulesh_compute.o lulesh_compute_base.o lulesh_domain.o lulesh_comms.o lulesh_comms_gpu.o tiled_lulesh xyz.asc regNumList.txt

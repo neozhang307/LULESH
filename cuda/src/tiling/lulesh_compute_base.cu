@@ -70,7 +70,7 @@ Additional BSD Notice
 #include "lulesh_comm.h"
 #include "utility/util.h"
 #include "utility/sm_utils.inl"
-#include "utility/allocator.h"
+// #include "utility/allocator.h"
 // Do not include lulesh_kernels.h here to avoid duplicate definitions
 // checkErrors function is already defined at line 75
 

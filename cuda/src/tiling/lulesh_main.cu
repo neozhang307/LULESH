@@ -73,7 +73,7 @@ Additional BSD Notice
 
 #include <utility/util.h>
 #include <utility/sm_utils.inl>
-#include <utility/allocator.h>
+// #include <utility/allocator.h>
 #include "cuda_profiler_api.h"
 
 #include "lulesh_split.h"

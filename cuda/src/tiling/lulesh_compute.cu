@@ -69,7 +69,7 @@ Additional BSD Notice
 #include "lulesh_split.h"
 #include "utility/util.h"
 #include "utility/sm_utils.inl"
-#include "utility/allocator.h"
+// #include "utility/allocator.h"
 #include "lulesh_kernels.h"
 #include "tiling_utils.h"
 // checkErrors function is already defined at line 75
@@ -85,9 +85,12 @@ void CalcVolumeForceForElems(const Real_t hgcoef,Domain *domain)
     Index_t padded_numElem = domain->padded_numElem;
 
 #ifdef DOUBLE_PRECISION
-    Vector_d<Real_t>* fx_elem = Allocator< Vector_d<Real_t> >::allocate(padded_numElem*8);
-    Vector_d<Real_t>* fy_elem = Allocator< Vector_d<Real_t> >::allocate(padded_numElem*8);
-    Vector_d<Real_t>* fz_elem = Allocator< Vector_d<Real_t> >::allocate(padded_numElem*8);
+    Real_t* fx_elem;
+    Real_t* fy_elem;
+    Real_t* fz_elem;
+    cudaMalloc((void**)&fx_elem, padded_numElem*8 * sizeof(Real_t));
+    cudaMalloc((void**)&fy_elem, padded_numElem*8 * sizeof(Real_t));
+    cudaMalloc((void**)&fz_elem, padded_numElem*8 * sizeof(Real_t));
 #else
     MimicFill(domain->fx, domain->numNode, Real_t(0.), domain->streams[0]);
     MimicFill(domain->fy, domain->numNode, Real_t(0.), domain->streams[0]);
@@ -112,9 +115,9 @@ void CalcVolumeForceForElems(const Real_t hgcoef,Domain *domain)
         domain->elemMass,
         domain->x, domain->y, domain->z, domain->xd, domain->yd, domain->zd,
 #ifdef DOUBLE_PRECISION
-        fx_elem->raw(), 
-        fy_elem->raw(), 
-        fz_elem->raw() ,
+        fx_elem, 
+        fy_elem, 
+        fz_elem,
 #else
         domain->fx,
         domain->fy,
@@ -137,9 +140,9 @@ void CalcVolumeForceForElems(const Real_t hgcoef,Domain *domain)
         domain->elemMass,
         domain->x, domain->y, domain->z, domain->xd, domain->yd, domain->zd,
 #ifdef DOUBLE_PRECISION
-        fx_elem->raw(), 
-        fy_elem->raw(), 
-        fz_elem->raw() ,
+        fx_elem, 
+        fy_elem, 
+        fz_elem,
 #else
         domain->fx,
         domain->fy,
@@ -162,18 +165,18 @@ void CalcVolumeForceForElems(const Real_t hgcoef,Domain *domain)
       domain->nodeElemCount,
       domain->nodeElemStart,
       domain->nodeElemCornerList,
-      fx_elem->raw(),
-      fy_elem->raw(),
-      fz_elem->raw(),
+      fx_elem,
+      fy_elem,
+      fz_elem,
       domain->fx,
       domain->fy,
       domain->fz,
       num_threads
     );
 
-    Allocator<Vector_d<Real_t> >::free(fx_elem,padded_numElem*8);
-    Allocator<Vector_d<Real_t> >::free(fy_elem,padded_numElem*8);
-    Allocator<Vector_d<Real_t> >::free(fz_elem,padded_numElem*8);
+    cudaFree(fx_elem);
+    cudaFree(fy_elem);
+    cudaFree(fz_elem);
 
 #endif // ifdef DOUBLE_PRECISION
    return ;
