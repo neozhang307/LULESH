@@ -89,9 +89,9 @@ void CalcVolumeForceForElems(const Real_t hgcoef,Domain *domain)
     Vector_d<Real_t>* fy_elem = Allocator< Vector_d<Real_t> >::allocate(padded_numElem*8);
     Vector_d<Real_t>* fz_elem = Allocator< Vector_d<Real_t> >::allocate(padded_numElem*8);
 #else
-    MimicFill(domain->fx.raw(), domain->fx.size(), Real_t(0.), domain->streams[0]);
-    MimicFill(domain->fy.raw(), domain->fy.size(), Real_t(0.), domain->streams[0]);
-    MimicFill(domain->fz.raw(), domain->fz.size(), Real_t(0.), domain->streams[0]);
+    MimicFill(domain->fx, domain->numNode, Real_t(0.), domain->streams[0]);
+    MimicFill(domain->fy, domain->numNode, Real_t(0.), domain->streams[0]);
+    MimicFill(domain->fz, domain->numNode, Real_t(0.), domain->streams[0]);
 #endif
 
     int num_threads = numElem ;
@@ -110,15 +110,15 @@ void CalcVolumeForceForElems(const Real_t hgcoef,Domain *domain)
         domain->nodelist, 
         domain->ss, 
         domain->elemMass,
-        domain->x.raw(), domain->y.raw(), domain->z.raw(), domain->xd.raw(), domain->yd.raw(), domain->zd.raw(),
+        domain->x, domain->y, domain->z, domain->xd, domain->yd, domain->zd,
 #ifdef DOUBLE_PRECISION
         fx_elem->raw(), 
         fy_elem->raw(), 
         fz_elem->raw() ,
 #else
-        domain->fx.raw(),
-        domain->fy.raw(),
-        domain->fz.raw(),
+        domain->fx,
+        domain->fy,
+        domain->fz,
 #endif
         domain->bad_vol_h,
         num_threads
@@ -135,15 +135,15 @@ void CalcVolumeForceForElems(const Real_t hgcoef,Domain *domain)
         domain->nodelist, 
         domain->ss, 
         domain->elemMass,
-        domain->x.raw(), domain->y.raw(), domain->z.raw(), domain->xd.raw(), domain->yd.raw(), domain->zd.raw(),
+        domain->x, domain->y, domain->z, domain->xd, domain->yd, domain->zd,
 #ifdef DOUBLE_PRECISION
         fx_elem->raw(), 
         fy_elem->raw(), 
         fz_elem->raw() ,
 #else
-        domain->fx.raw(),
-        domain->fy.raw(),
-        domain->fz.raw(),
+        domain->fx,
+        domain->fy,
+        domain->fz,
 #endif
         domain->bad_vol_h,
         num_threads
@@ -159,15 +159,15 @@ void CalcVolumeForceForElems(const Real_t hgcoef,Domain *domain)
     AddNodeForcesFromElems_kernel<<<dimGrid,block_size,0,domain->streams[0]>>>
     ( domain->numNode,
       domain->padded_numNode,
-      domain->nodeElemCount.raw(),
-      domain->nodeElemStart.raw(),
-      domain->nodeElemCornerList.raw(),
+      domain->nodeElemCount.raw(),  // Keep Vector_d for now
+      domain->nodeElemStart.raw(),  // Keep Vector_d for now
+      domain->nodeElemCornerList.raw(),  // Keep Vector_d for now
       fx_elem->raw(),
       fy_elem->raw(),
       fz_elem->raw(),
-      domain->fx.raw(),
-      domain->fy.raw(),
-      domain->fz.raw(),
+      domain->fx,
+      domain->fy,
+      domain->fz,
       num_threads
     );
 
@@ -201,9 +201,9 @@ void CalcAccelerationForNodes(Domain *domain)
 
     CalcAccelerationForNodes_kernel<<<dimGrid, dimBlock,0,domain->streams[0]>>>
         (domain->numNode,
-         domain->xdd.raw(),domain->ydd.raw(),domain->zdd.raw(),
-         domain->fx.raw(),domain->fy.raw(),domain->fz.raw(),
-         domain->nodalMass.raw());
+         domain->xdd,domain->ydd,domain->zdd,
+         domain->fx,domain->fy,domain->fz,
+         domain->nodalMass);
 
     //cudaDeviceSynchronize();
     //cudaCheckError();
@@ -220,21 +220,21 @@ void ApplyAccelerationBoundaryConditionsForNodes(Domain *domain)
     if (domain->numSymmX > 0)
       ApplyAccelerationBoundaryConditionsForNodes_kernel<<<dimGrid, dimBlock,0,domain->streams[0]>>>
         (domain->numSymmX,
-         domain->xdd.raw(),
+         domain->xdd,
          domain->symmX.raw());
 
     dimGrid = PAD_DIV(domain->numSymmY,dimBlock);
     if (domain->numSymmY > 0)
       ApplyAccelerationBoundaryConditionsForNodes_kernel<<<dimGrid, dimBlock,0,domain->streams[0]>>>
         (domain->numSymmY,
-         domain->ydd.raw(),
+         domain->ydd,
          domain->symmY.raw());
 
     dimGrid = PAD_DIV(domain->numSymmZ,dimBlock);
     if (domain->numSymmZ > 0)
       ApplyAccelerationBoundaryConditionsForNodes_kernel<<<dimGrid, dimBlock,0,domain->streams[0]>>>
         (domain->numSymmZ,
-         domain->zdd.raw(),
+         domain->zdd,
          domain->symmZ.raw());
 }
 
@@ -277,9 +277,9 @@ void CalcPositionAndVelocityForNodes(const Real_t u_cut, Domain* domain)
 
     CalcPositionAndVelocityForNodes_kernel<<<dimGrid, dimBlock,0,domain->streams[0]>>>
         (domain->numNode,domain->deltatime_h,u_cut,
-         domain->x.raw(),domain->y.raw(),domain->z.raw(),
-         domain->xd.raw(),domain->yd.raw(),domain->zd.raw(),
-         domain->xdd.raw(),domain->ydd.raw(),domain->zdd.raw());
+         domain->x,domain->y,domain->z,
+         domain->xd,domain->yd,domain->zd,
+         domain->xdd,domain->ydd,domain->zdd);
 
     //cudaDeviceSynchronize();
     //cudaCheckError();
@@ -333,7 +333,7 @@ void CalcKinematicsAndMonotonicQGradient(Domain *domain)
        domain->nodelist,
        domain->volo,
        domain->v,
-       domain->x.raw(), domain->y.raw(), domain->z.raw(), domain->xd.raw(), domain->yd.raw(), domain->zd.raw(),
+       domain->x, domain->y, domain->z, domain->xd, domain->yd, domain->zd,
        domain->vnew,
        domain->delv,
        domain->arealg,

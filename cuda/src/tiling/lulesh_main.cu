@@ -142,9 +142,19 @@ void cuda_init(int rank)
 
 void write_solution(Domain* locDom)
 {
-  Vector_h<Real_t> x_h = locDom->x;
-  Vector_h<Real_t> y_h = locDom->y;
-  Vector_h<Real_t> z_h = locDom->z;
+  // Create host vectors and allocate memory
+  Vector_h<Real_t> x_h;
+  Vector_h<Real_t> y_h;
+  Vector_h<Real_t> z_h;
+  
+  x_h.resize(locDom->numNode);
+  y_h.resize(locDom->numNode);
+  z_h.resize(locDom->numNode);
+  
+  // Copy data from device to host
+  cudaMemcpy(x_h.raw(), locDom->x, locDom->numNode * sizeof(Real_t), cudaMemcpyDeviceToHost);
+  cudaMemcpy(y_h.raw(), locDom->y, locDom->numNode * sizeof(Real_t), cudaMemcpyDeviceToHost);
+  cudaMemcpy(z_h.raw(), locDom->z, locDom->numNode * sizeof(Real_t), cudaMemcpyDeviceToHost);
 
 //  printf("Writing solution to file xyz.asc\n");
   std::stringstream filename;

@@ -140,13 +140,13 @@ void LagrangeNodal(Domain *domain)
   // For MPI: Synchronize position and velocity data with neighboring processes
   
   // initialize raw device pointers for MPI communication
-  domain->d_x = domain->x.raw();
-  domain->d_y = domain->y.raw();
-  domain->d_z = domain->z.raw();
+  domain->d_x = domain->x;
+  domain->d_y = domain->y;
+  domain->d_z = domain->z;
 
-  domain->d_xd = domain->xd.raw();
-  domain->d_yd = domain->yd.raw();
-  domain->d_zd = domain->zd.raw();
+  domain->d_xd = domain->xd;
+  domain->d_yd = domain->yd;
+  domain->d_zd = domain->zd;
 
   // Set up function pointers to access position and velocity components
   fieldData[0] = &Domain::get_x;  // x-position
@@ -185,9 +185,9 @@ void CalcForceForNodes(Domain *domain)
 
 #if USE_MPI 
   // initialize pointers
-  domain->d_fx = domain->fx.raw();
-  domain->d_fy = domain->fy.raw();
-  domain->d_fz = domain->fz.raw();
+  domain->d_fx = domain->fx;
+  domain->d_fy = domain->fy;
+  domain->d_fz = domain->fz;
 
   Domain_member fieldData[3] ;
   fieldData[0] = &Domain::get_fx ;

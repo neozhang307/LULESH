@@ -8,23 +8,31 @@
 
 void AllocateNodalPersistent(Domain* domain, size_t domNodes)
 {
-  domain->x.resize(domNodes) ;  /* coordinates */
-  domain->y.resize(domNodes) ;
-  domain->z.resize(domNodes) ;
+  // Allocate device memory for node coordinates
+  cudaMalloc((void**)&domain->x, domNodes * sizeof(Real_t));  /* coordinates */
+  cudaMalloc((void**)&domain->y, domNodes * sizeof(Real_t));
+  cudaMalloc((void**)&domain->z, domNodes * sizeof(Real_t));
 
-  domain->xd.resize(domNodes) ; /* velocities */
-  domain->yd.resize(domNodes) ;
-  domain->zd.resize(domNodes) ;
+  // Allocate device memory for node velocities
+  cudaMalloc((void**)&domain->xd, domNodes * sizeof(Real_t)); /* velocities */
+  cudaMalloc((void**)&domain->yd, domNodes * sizeof(Real_t));
+  cudaMalloc((void**)&domain->zd, domNodes * sizeof(Real_t));
 
-  domain->xdd.resize(domNodes) ; /* accelerations */
-  domain->ydd.resize(domNodes) ;
-  domain->zdd.resize(domNodes) ;
+  // Allocate device memory for node accelerations
+  cudaMalloc((void**)&domain->xdd, domNodes * sizeof(Real_t)); /* accelerations */
+  cudaMalloc((void**)&domain->ydd, domNodes * sizeof(Real_t));
+  cudaMalloc((void**)&domain->zdd, domNodes * sizeof(Real_t));
 
-  domain->fx.resize(domNodes) ;  /* forces */
-  domain->fy.resize(domNodes) ;
-  domain->fz.resize(domNodes) ;
+  // Allocate device memory for node forces
+  cudaMalloc((void**)&domain->fx, domNodes * sizeof(Real_t));  /* forces */
+  cudaMalloc((void**)&domain->fy, domNodes * sizeof(Real_t));
+  cudaMalloc((void**)&domain->fz, domNodes * sizeof(Real_t));
 
-  domain->nodalMass.resize(domNodes) ;  /* mass */
+  // Allocate device memory for nodal mass
+  cudaMalloc((void**)&domain->nodalMass, domNodes * sizeof(Real_t));  /* mass */
+  
+  // Allocate host memory for nodal mass (for host access)
+  cudaMallocHost((void**)&domain->h_nodalMass, domNodes * sizeof(Real_t));
 }
 
 void AllocateElemPersistent(Domain* domain, size_t domElems, size_t padded_domElems)
@@ -99,15 +107,15 @@ void InitializeFields(Domain* domain)
  MimicFill(domain->q, domain->numElem, Real_t(0.), domain->streams[0]);
  MimicFill(domain->v, domain->numElem, Real_t(1.), domain->streams[0]);
 
- MimicFill(domain->xd.raw(), domain->xd.size(), Real_t(0.), domain->streams[0]);
- MimicFill(domain->yd.raw(), domain->yd.size(), Real_t(0.), domain->streams[0]);
- MimicFill(domain->zd.raw(), domain->zd.size(), Real_t(0.), domain->streams[0]);
+ MimicFill(domain->xd, domain->numNode, Real_t(0.), domain->streams[0]);
+ MimicFill(domain->yd, domain->numNode, Real_t(0.), domain->streams[0]);
+ MimicFill(domain->zd, domain->numNode, Real_t(0.), domain->streams[0]);
 
- MimicFill(domain->xdd.raw(), domain->xdd.size(), Real_t(0.), domain->streams[0]);
- MimicFill(domain->ydd.raw(), domain->ydd.size(), Real_t(0.), domain->streams[0]);
- MimicFill(domain->zdd.raw(), domain->zdd.size(), Real_t(0.), domain->streams[0]);
+ MimicFill(domain->xdd, domain->numNode, Real_t(0.), domain->streams[0]);
+ MimicFill(domain->ydd, domain->numNode, Real_t(0.), domain->streams[0]);
+ MimicFill(domain->zdd, domain->numNode, Real_t(0.), domain->streams[0]);
 
- MimicFill(domain->nodalMass.raw(), domain->nodalMass.size(), Real_t(0.), domain->streams[0]);
+ MimicFill(domain->nodalMass, domain->numNode, Real_t(0.), domain->streams[0]);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -355,9 +363,10 @@ void Domain::BuildMesh(Int_t nx, Int_t edgeNodes, Int_t edgeElems, Int_t domNode
     tz = Real_t(1.125)*Real_t(m_planeLoc*nx+plane+1)/Real_t(meshEdgeElems) ;
   }
 
-  x = x_h;
-  y = y_h;
-  z = z_h;
+  // Copy coordinate data from host to device using raw pointers
+  cudaMemcpy(x, x_h.raw(), domNodes * sizeof(Real_t), cudaMemcpyHostToDevice);
+  cudaMemcpy(y, y_h.raw(), domNodes * sizeof(Real_t), cudaMemcpyHostToDevice);
+  cudaMemcpy(z, z_h.raw(), domNodes * sizeof(Real_t), cudaMemcpyHostToDevice);
 
   nodelist_h.resize(padded_domElems*8);
 
@@ -826,9 +835,10 @@ Domain *NewDomain(char* argv[], Int_t numRanks, Index_t colLoc,
        y_h[i] = Real_t(py) ;
        z_h[i] = Real_t(pz) ;
     }
-    domain->x = x_h;
-    domain->y = y_h;
-    domain->z = z_h;
+    // Copy coordinate data from host to device
+    cudaMemcpy(domain->x, x_h.raw(), domNodes * sizeof(Real_t), cudaMemcpyHostToDevice);
+    cudaMemcpy(domain->y, y_h.raw(), domNodes * sizeof(Real_t), cudaMemcpyHostToDevice);
+    cudaMemcpy(domain->z, z_h.raw(), domNodes * sizeof(Real_t), cudaMemcpyHostToDevice);
 
     /* embed hexehedral elements in nodal point lattice */
     nodelist_h.resize(padded_domElems*8);
@@ -1167,8 +1177,10 @@ Domain *NewDomain(char* argv[], Int_t numRanks, Index_t colLoc,
      }
   }
 
-  domain->h_nodalMass = nodalMass_h;
-  domain->nodalMass = nodalMass_h;
+  // Copy nodal mass data to host array
+  cudaMemcpy(domain->h_nodalMass, nodalMass_h.raw(), domNodes * sizeof(Real_t), cudaMemcpyHostToHost);
+  // Copy nodal mass data to device
+  cudaMemcpy(domain->nodalMass, nodalMass_h.raw(), domNodes * sizeof(Real_t), cudaMemcpyHostToDevice);
   // Copy volumetric data to device
   cudaMemcpy(domain->volo, volo_h.raw(), domElems * sizeof(Real_t), cudaMemcpyHostToDevice);
   cudaMemcpy(domain->elemMass, elemMass_h.raw(), domElems * sizeof(Real_t), cudaMemcpyHostToDevice);

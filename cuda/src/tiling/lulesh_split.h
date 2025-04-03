@@ -82,7 +82,7 @@ public:
   /* Elem-centered */
 
   Index_t* matElemlist ; /* material indexset */
-  Index_t*nodelist ;    /* elemToNode connectivity */
+  Index_t* nodelist ;    /* elemToNode connectivity */
 
   Index_t* lxim ;        /* element connectivity through face */
   Index_t* lxip ;
@@ -129,25 +129,25 @@ public:
 /******************************************************** */
   /* Node-centered */
 
-  Vector_d<Real_t> x ;            /* coordinates */
-  Vector_d<Real_t> y ;
-  Vector_d<Real_t> z ;
+  Real_t* x ;            /* coordinates */
+  Real_t* y ;
+  Real_t* z ;
 
-  Vector_d<Real_t> xd ;           /* velocities */
-  Vector_d<Real_t> yd ;
-  Vector_d<Real_t> zd ;
+  Real_t* xd ;           /* velocities */
+  Real_t* yd ;
+  Real_t* zd ;
 
 
-  Vector_d<Real_t> xdd ;          /* accelerations */
-  Vector_d<Real_t> ydd ;
-  Vector_d<Real_t> zdd ;
+  Real_t* xdd ;          /* accelerations */
+  Real_t* ydd ;
+  Real_t* zdd ;
 
-  Vector_d<Real_t> fx ;           /* forces */
-  Vector_d<Real_t> fy ;
-  Vector_d<Real_t> fz ;
+  Real_t* fx ;           /* forces */
+  Real_t* fy ;
+  Real_t* fz ;
 
-  Vector_d<Real_t> nodalMass ;    /* mass */
-  Vector_h<Real_t> h_nodalMass ;    /* mass - host */
+  Real_t* nodalMass ;    /* mass */
+  Real_t* h_nodalMass ;    /* mass - host */
 
   /* device pointers for comms */
   Real_t *d_delv_xi ;      /* velocity gradient -- temporary */
