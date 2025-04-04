@@ -77,7 +77,7 @@ public:
 
 
   Index_t max_streams;
-  std::vector<cudaStream_t> streams;
+  cudaStream_t* streams;
 
   /* Elem-centered */
 
@@ -374,14 +374,14 @@ void CalcKinematicsForElems(Domain& domain, Real_t deltaTime, Index_t numElem);
 void CalcLagrangeElements(Domain& domain, Real_t* vnew);
 void CalcQForElems(Domain& domain);
 void ApplyMaterialPropertiesForElems(Domain& domain);
-void CalcTimeConstraintsForElems(Domain* domain);
-void CalcAccelerationForNodes(Domain* domain);
+void CalcTimeConstraintsForElems(Domain* domain, cudaStream_t* streams);
+void CalcAccelerationForNodes(Domain* domain, cudaStream_t stream);
 void InitStressTermsForElems(Domain& domain, Real_t *sigxx, Real_t *sigyy, Real_t *sigzz);
 void IntegrateStressForElems(Domain& domain, Real_t *sigxx, Real_t *sigyy, Real_t *sigzz, Real_t *determ);
-void CalcHourglassControlForElems(Domain& domain, Real_t *hgcoef);
-void CalcVolumeForceForElems(Domain& domain);
+// void CalcHourglassControlForElems(Domain& domain, Real_t *hgcoef);
+// void CalcVolumeForceForElems(Domain& domain, cudaStream_t stream);
 void CalcForceForNodes(Domain* domain);
-void CalcMonotonicQRegionForElems(Domain& domain, Int_t r, Int_t rep);
+// void CalcMonotonicQRegionForElems(Domain& domain, Int_t r, Int_t rep, cudaStream_t stream);
 
 // Main execution functions
 void TimeIncrement(Domain* domain);
@@ -389,9 +389,9 @@ void LagrangeLeapFrog(Domain* domain);
 void LagrangeNodal(Domain* domain);
 void LagrangeElements(Domain* domain);
 
-void ApplyMaterialPropertiesAndUpdateVolume(Domain *domain);
-void CalcPositionAndVelocityForNodes(const Real_t u_cut, Domain* domain);
-void CalcVolumeForceForElems(const Real_t hgcoef,Domain *domain);
+void ApplyMaterialPropertiesAndUpdateVolume(Domain *domain, cudaStream_t stream);
+void CalcPositionAndVelocityForNodes(const Real_t u_cut, Domain* domain, cudaStream_t stream);
+// void CalcVolumeForceForElems(const Real_t hgcoef,Domain *domain, cudaStream_t stream);
 // Initialization and setup functions
 Domain *NewDomain(char* argv[], Int_t numRanks, Index_t colLoc,
                Index_t rowLoc, Index_t planeLoc,
@@ -399,6 +399,6 @@ Domain *NewDomain(char* argv[], Int_t numRanks, Index_t colLoc,
 void InitMeshDecomp(Int_t numRanks, Int_t myRank, Int_t *col, Int_t *row, Int_t *plane, Int_t *side);
 void printUsage(char *argv[]);
 void cuda_init(Int_t device);
-void CalcKinematicsAndMonotonicQGradient(Domain *domain);
+// void CalcKinematicsAndMonotonicQGradient(Domain *domain, cudaStream_t stream);
 
 #endif // LULESH_H

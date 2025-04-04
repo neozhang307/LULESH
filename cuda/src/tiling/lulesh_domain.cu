@@ -655,7 +655,7 @@ Domain *NewDomain(char* argv[], Int_t numRanks, Index_t colLoc,
   fflush(stdout);
   
   try {
-    domain->streams.resize(domain->max_streams);
+    domain->streams = new cudaStream_t[domain->max_streams];
     printf("DEBUG: Streams vector resized successfully\n");
     fflush(stdout);
 

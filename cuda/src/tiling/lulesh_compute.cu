@@ -79,7 +79,7 @@ Additional BSD Notice
 
 
 
-void CalcVolumeForceForElems(const Real_t hgcoef,Domain *domain)
+void CalcVolumeForceForElems(const Real_t hgcoef, Domain *domain, cudaStream_t stream)
 {
     Index_t numElem = domain->numElem ;
     Index_t padded_numElem = domain->padded_numElem;
@@ -92,9 +92,9 @@ void CalcVolumeForceForElems(const Real_t hgcoef,Domain *domain)
     cudaMalloc((void**)&fy_elem, padded_numElem*8*sizeof(Real_t));
     cudaMalloc((void**)&fz_elem, padded_numElem*8*sizeof(Real_t));
 #else
-    MimicFill(domain->fx, domain->numNode, Real_t(0.), domain->streams[0]);
-    MimicFill(domain->fy, domain->numNode, Real_t(0.), domain->streams[0]);
-    MimicFill(domain->fz, domain->numNode, Real_t(0.), domain->streams[0]);
+    MimicFill(domain->fx, domain->numNode, Real_t(0.), stream);
+    MimicFill(domain->fy, domain->numNode, Real_t(0.), stream);
+    MimicFill(domain->fz, domain->numNode, Real_t(0.), stream);
 #endif
 
     int num_threads = numElem ;
@@ -104,7 +104,7 @@ void CalcVolumeForceForElems(const Real_t hgcoef,Domain *domain)
     bool hourg_gt_zero = hgcoef > Real_t(0.0);
     if (hourg_gt_zero)
     {
-      CalcVolumeForceForElems_kernel<true> <<<dimGrid,block_size,0,domain->streams[0]>>>
+      CalcVolumeForceForElems_kernel<true> <<<dimGrid,block_size,0,stream>>>
       ( domain->volo, 
         domain->v, 
         domain->p, 
@@ -129,7 +129,7 @@ void CalcVolumeForceForElems(const Real_t hgcoef,Domain *domain)
     }
     else
     {
-      CalcVolumeForceForElems_kernel<false> <<<dimGrid,block_size,0,domain->streams[0]>>>
+      CalcVolumeForceForElems_kernel<false> <<<dimGrid,block_size,0,stream>>>
       ( domain->volo,
         domain->v, 
         domain->p, 
@@ -159,7 +159,7 @@ void CalcVolumeForceForElems(const Real_t hgcoef,Domain *domain)
     // Launch boundary nodes first
     dimGrid= PAD_DIV(num_threads,block_size);
 
-    AddNodeForcesFromElems_kernel<<<dimGrid,block_size,0,domain->streams[0]>>>
+    AddNodeForcesFromElems_kernel<<<dimGrid,block_size,0,stream>>>
     ( domain->numNode,
       domain->padded_numNode,
       domain->nodeElemCount,
@@ -190,11 +190,11 @@ void CalcVolumeForceForElems(const Real_t hgcoef,Domain *domain)
 
 
 // Remove static qualifier for function used across files
-void CalcVolumeForceForElems(Domain* domain)
+void CalcVolumeForceForElems(Domain* domain, cudaStream_t stream)
 {
       const Real_t hgcoef = domain->hgcoef ;
 
-     CalcVolumeForceForElems(hgcoef,domain);
+     CalcVolumeForceForElems(hgcoef,domain, stream);
 
      //CalcVolumeForceForElems_warp_per_4cell(hgcoef,domain);
 }
@@ -203,12 +203,12 @@ void CalcVolumeForceForElems(Domain* domain)
 
 
 // static inline
-void CalcAccelerationForNodes(Domain *domain)
+void CalcAccelerationForNodes(Domain *domain, cudaStream_t stream)
 {
     Index_t dimBlock = 128;
     Index_t dimGrid = PAD_DIV(domain->numNode,dimBlock);
 
-    CalcAccelerationForNodes_kernel<<<dimGrid, dimBlock,0,domain->streams[0]>>>
+    CalcAccelerationForNodes_kernel<<<dimGrid, dimBlock,0,stream>>>
         (domain->numNode,
          domain->xdd,domain->ydd,domain->zdd,
          domain->fx,domain->fy,domain->fz,
@@ -220,28 +220,28 @@ void CalcAccelerationForNodes(Domain *domain)
 
 
 
-void ApplyAccelerationBoundaryConditionsForNodes(Domain *domain)
+void ApplyAccelerationBoundaryConditionsForNodes(Domain *domain, cudaStream_t stream)
 {
 
     Index_t dimBlock = 128;
 
     Index_t dimGrid = PAD_DIV(domain->numSymmX,dimBlock);
     if (domain->numSymmX > 0)
-      ApplyAccelerationBoundaryConditionsForNodes_kernel<<<dimGrid, dimBlock,0,domain->streams[0]>>>
+      ApplyAccelerationBoundaryConditionsForNodes_kernel<<<dimGrid, dimBlock,0,stream>>>
         (domain->numSymmX,
          domain->xdd,
          domain->symmX);
 
     dimGrid = PAD_DIV(domain->numSymmY,dimBlock);
     if (domain->numSymmY > 0)
-      ApplyAccelerationBoundaryConditionsForNodes_kernel<<<dimGrid, dimBlock,0,domain->streams[0]>>>
+      ApplyAccelerationBoundaryConditionsForNodes_kernel<<<dimGrid, dimBlock,0,stream>>>
         (domain->numSymmY,
          domain->ydd,
          domain->symmY);
 
     dimGrid = PAD_DIV(domain->numSymmZ,dimBlock);
     if (domain->numSymmZ > 0)
-      ApplyAccelerationBoundaryConditionsForNodes_kernel<<<dimGrid, dimBlock,0,domain->streams[0]>>>
+      ApplyAccelerationBoundaryConditionsForNodes_kernel<<<dimGrid, dimBlock,0,stream>>>
         (domain->numSymmZ,
          domain->zdd,
          domain->symmZ);
@@ -279,12 +279,12 @@ void CalcPositionAndVelocityForNodes_kernel(int numNode,
     }
 }
 
-void CalcPositionAndVelocityForNodes(const Real_t u_cut, Domain* domain)
+void CalcPositionAndVelocityForNodes(const Real_t u_cut, Domain* domain, cudaStream_t stream)
 {
     Index_t dimBlock = 128;
     Index_t dimGrid = PAD_DIV(domain->numNode,dimBlock);
 
-    CalcPositionAndVelocityForNodes_kernel<<<dimGrid, dimBlock,0,domain->streams[0]>>>
+    CalcPositionAndVelocityForNodes_kernel<<<dimGrid, dimBlock,0,stream>>>
         (domain->numNode,domain->deltatime_h,u_cut,
          domain->x,domain->y,domain->z,
          domain->xd,domain->yd,domain->zd,
@@ -296,7 +296,7 @@ void CalcPositionAndVelocityForNodes(const Real_t u_cut, Domain* domain)
 
 
 
-void CalcKinematicsAndMonotonicQGradient(Domain *domain)
+void CalcKinematicsAndMonotonicQGradient(Domain *domain, cudaStream_t stream)
 {
     printf("DEBUG: Inside CalcKinematicsAndMonotonicQGradient\n");
     fflush(stdout);
@@ -337,7 +337,7 @@ void CalcKinematicsAndMonotonicQGradient(Domain *domain)
     }
     fflush(stdout);
 
-    CalcKinematicsAndMonotonicQGradient_kernel<<<dimGrid,block_size,0,domain->streams[0]>>>
+    CalcKinematicsAndMonotonicQGradient_kernel<<<dimGrid,block_size,0,stream>>>
     (  numElem,padded_numElem, domain->deltatime_h, 
        domain->nodelist,
        domain->volo,
@@ -377,7 +377,7 @@ void CalcKinematicsAndMonotonicQGradient(Domain *domain)
 
 
 
-void CalcMonotonicQRegionForElems(Domain *domain)
+void CalcMonotonicQRegionForElems(Domain *domain, cudaStream_t stream)
 {
     printf("DEBUG: Inside CalcMonotonicQRegionForElems\n");
     fflush(stdout);
@@ -417,7 +417,7 @@ void CalcMonotonicQRegionForElems(Domain *domain)
     }
     fflush(stdout);
 
-    CalcMonotonicQRegionForElems_kernel<<<dimGrid,dimBlock,0,domain->streams[0]>>>
+    CalcMonotonicQRegionForElems_kernel<<<dimGrid,dimBlock,0,stream>>>
     ( qlc_monoq,qqc_monoq,monoq_limiter_mult,monoq_max_slope,ptiny,elength,
       domain->regElemlist,domain->elemBC,
       domain->lxim,domain->lxip,
@@ -451,7 +451,7 @@ void CalcMonotonicQRegionForElems(Domain *domain)
 
 
 
-void ApplyMaterialPropertiesAndUpdateVolume(Domain *domain)
+void ApplyMaterialPropertiesAndUpdateVolume(Domain *domain, cudaStream_t stream)
 {
   printf("DEBUG: Inside ApplyMaterialPropertiesAndUpdateVolume\n");
   fflush(stdout);
@@ -486,7 +486,7 @@ void ApplyMaterialPropertiesAndUpdateVolume(Domain *domain)
            domain->eosvmin, domain->eosvmax, domain->v_cut);
     fflush(stdout);
 
-    ApplyMaterialPropertiesAndUpdateVolume_kernel<<<dimGrid,dimBlock,0,domain->streams[0]>>>
+    ApplyMaterialPropertiesAndUpdateVolume_kernel<<<dimGrid,dimBlock,0,stream>>>
         (length,
          domain->refdens,
          domain->e_cut,
@@ -546,7 +546,7 @@ void ApplyMaterialPropertiesAndUpdateVolume(Domain *domain)
  * The timestep calculation is a critical part of explicit simulations to ensure
  * numerical stability. If the timestep is too large, the simulation can become unstable.
  */
-void CalcTimeConstraintsForElems(Domain* domain)
+void CalcTimeConstraintsForElems(Domain* domain, cudaStream_t* streams)
 {
     printf("DEBUG: Entered CalcTimeConstraintsForElems\n");
     fflush(stdout);
@@ -605,7 +605,7 @@ void CalcTimeConstraintsForElems(Domain* domain)
 
     // Launch kernel to compute per-block minimum timesteps
     // Each block processes a portion of the elements and finds local minimums
-    CalcTimeConstraintsForElems_kernel<dimBlock> <<<dimGrid, dimBlock,0,domain->streams[0]>>>
+    CalcTimeConstraintsForElems_kernel<dimBlock> <<<dimGrid, dimBlock,0,streams[0]>>>
         (length, qqc2, dvovmax,
          domain->matElemlist, domain->ss, domain->vdov, domain->arealg,
          dev_mindtcourant, dev_mindthydro);
@@ -613,12 +613,12 @@ void CalcTimeConstraintsForElems(Domain* domain)
     // TODO: if dimGrid < 1024, should launch less threads
     // Launch second kernel to find global minimum across all blocks
     // This kernel performs the final reduction and stores results in domain
-    CalcMinDtOneBlock<max_dimGrid> <<<2, max_dimGrid, max_dimGrid*sizeof(Real_t), domain->streams[1]>>>
+    CalcMinDtOneBlock<max_dimGrid> <<<2, max_dimGrid, max_dimGrid*sizeof(Real_t), streams[1]>>>
         (dev_mindthydro, dev_mindtcourant, domain->dtcourant_h, domain->dthydro_h, dimGrid);
 
     // Record event to track when timestep calculation is complete
     // This allows other operations to wait for this calculation to finish
-    cudaEventRecord(domain->time_constraint_computed, domain->streams[1]);
+    cudaEventRecord(domain->time_constraint_computed, streams[1]);
 
     // Free temporary device memory
     cudaFree(dev_mindtcourant);

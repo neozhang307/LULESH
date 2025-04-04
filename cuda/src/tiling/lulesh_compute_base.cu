@@ -125,15 +125,15 @@ void LagrangeNodal(Domain *domain)
 #endif
 
   // Step 2: Calculate accelerations for all nodes (F = ma -> a = F/m)
-  CalcAccelerationForNodes(domain);
+  CalcAccelerationForNodes(domain,domain->streams[0]);
 
   // Step 3: Apply boundary conditions to accelerations
   // This enforces constraints like symmetry planes and free surfaces
-  ApplyAccelerationBoundaryConditionsForNodes(domain);
+  ApplyAccelerationBoundaryConditionsForNodes(domain,domain->streams[0]);
 
   // Step 4: Update node positions and velocities using calculated accelerations
   // This applies the time integration scheme (leapfrog method)
-  CalcPositionAndVelocityForNodes(u_cut, domain);
+  CalcPositionAndVelocityForNodes(u_cut, domain,domain->streams[0]);
 
 #if USE_MPI
 #ifdef SEDOV_SYNC_POS_VEL_EARLY
@@ -178,7 +178,7 @@ void CalcForceForNodes(Domain *domain)
            true, false) ;
 #endif
 
-  CalcVolumeForceForElems(domain);
+  CalcVolumeForceForElems(domain,domain->streams[0]);
 
   // moved here from the main loop to allow async execution with GPU work
   TimeIncrement(domain);
@@ -290,7 +290,7 @@ void LagrangeElements(Domain *domain)
     fflush(stdout);
   }
   
-  CalcKinematicsAndMonotonicQGradient(domain);
+  CalcKinematicsAndMonotonicQGradient(domain,domain->streams[0]);
   
   printf("DEBUG: CalcKinematicsAndMonotonicQGradient completed\n");
   fflush(stdout);
@@ -350,7 +350,7 @@ void LagrangeElements(Domain *domain)
     }
   }
   
-  CalcMonotonicQRegionForElems(domain);
+  CalcMonotonicQRegionForElems(domain,domain->streams[0]);
   
   printf("DEBUG: CalcMonotonicQRegionForElems completed\n");
   fflush(stdout);
@@ -383,7 +383,7 @@ void LagrangeElements(Domain *domain)
     }
   }
   
-  ApplyMaterialPropertiesAndUpdateVolume(domain);
+  ApplyMaterialPropertiesAndUpdateVolume(domain,domain->streams[0]);
   
   printf("DEBUG: ApplyMaterialPropertiesAndUpdateVolume completed\n");
   fflush(stdout);
@@ -494,6 +494,6 @@ void LagrangeLeapFrog(Domain* domain)
    // - Uses both velocity (Courant) and volume change (hydro) constraints
    // - Selects the most restrictive timestep across all elements
    printf("DEBUG: Calling CalcTimeConstraintsForElems\n");
-   CalcTimeConstraintsForElems(domain);
+   CalcTimeConstraintsForElems(domain, domain->streams);
    printf("DEBUG: CalcTimeConstraintsForElems completed\n");
 }

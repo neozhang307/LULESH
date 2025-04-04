@@ -4,19 +4,19 @@
 #include "lulesh_split.h"
 
 // Function prototypes for communication components
-void LagrangeNodal(Domain *domain);
-void LagrangeElements(Domain *domain);
+// void LagrangeNodal(Domain *domain);
+// void LagrangeElements(Domain *domain, cudaStream_t stream);
 void CalcForceForNodes(Domain *domain);
 void TimeIncrement(Domain* domain);
 
 // These are implemented in lulesh_compute.cu but needed by lulesh_compute_comm.cu
 void CalcAccelerationForNodes(Domain *domain);
 void CalcPositionAndVelocityForNodes(const Real_t u_cut, Domain* domain);
-void CalcKinematicsAndMonotonicQGradient(Domain *domain);
-void ApplyMaterialPropertiesAndUpdateVolume(Domain *domain);
-void ApplyAccelerationBoundaryConditionsForNodes(Domain *domain);
-void CalcVolumeForceForElems(Domain* domain);
-void CalcMonotonicQRegionForElems(Domain *domain);
+void CalcKinematicsAndMonotonicQGradient(Domain *domain, cudaStream_t stream);
+void ApplyMaterialPropertiesAndUpdateVolume(Domain *domain, cudaStream_t stream);
+void ApplyAccelerationBoundaryConditionsForNodes(Domain *domain, cudaStream_t stream);
+void CalcVolumeForceForElems(Domain* domain, cudaStream_t stream);
+void CalcMonotonicQRegionForElems(Domain *domain, cudaStream_t stream);
 
 // Kernel declarations needed by both files
 extern __global__ void CalcAccelerationForNodes_kernel(int numNode,
