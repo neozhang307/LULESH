@@ -6,8 +6,8 @@
 // Function prototypes for communication components
 // void LagrangeNodal(Domain *domain);
 // void LagrangeElements(Domain *domain, cudaStream_t stream);
-void CalcForceForNodes(Domain *domain);
-void TimeIncrement(Domain* domain);
+// void CalcForceForNodes(Domain *domain);
+// void TimeIncrement(Domain* domain);
 
 // These are implemented in lulesh_compute.cu but needed by lulesh_compute_comm.cu
 void CalcAccelerationForNodes(Domain *domain);
