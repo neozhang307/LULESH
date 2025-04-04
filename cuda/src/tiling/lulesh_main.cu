@@ -422,7 +422,7 @@ int main(int argc, char *argv[])
     // Execute one timestep of the Lagrangian hydrodynamics simulation
     try {
       printf("DEBUG: Calling LagrangeLeapFrog\n");
-      LagrangeLeapFrog(baseDom);
+      LagrangeLeapFrog(baseDom, baseDom->streams);
       printf("DEBUG: Completed LagrangeLeapFrog\n");
     } catch (std::exception& e) {
       printf("ERROR: Exception in LagrangeLeapFrog: %s\n", e.what());

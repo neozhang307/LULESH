@@ -75,330 +75,8 @@ Additional BSD Notice
 // checkErrors function is already defined at line 75
 
 
-
-
-
-
-// static inline
-/*
- * LagrangeNodal - Performs node-centered calculations for one timestep
- *
- * This function handles the first phase of the Lagrangian simulation:
- * 1. Calculate forces at nodes from element contributions
- * 2. Compute nodal accelerations based on forces and masses
- * 3. Apply boundary conditions (e.g., symmetry, free surfaces)
- * 4. Update node positions and velocities
- * 5. Synchronize updated values between processes (for MPI)
- *
- * This phase focuses on the mesh nodes (vertices) rather than elements.
- */
-void LagrangeNodal(Domain *domain)
-{
-  printf("DEBUG: Inside LagrangeNodal\n");
-  
-#ifdef SEDOV_SYNC_POS_VEL_EARLY
-   // Array of function pointers for accessing domain data during MPI communication
-   Domain_member fieldData[6];
-   printf("DEBUG: SEDOV_SYNC_POS_VEL_EARLY defined\n");
-#endif
-
-  // Get bulk viscosity cutoff parameter (controls artificial viscosity)
-  Real_t u_cut = domain->u_cut;
-  printf("DEBUG: Got u_cut = %e\n", u_cut);
-
-  /* time of boundary condition evaluation is beginning of step for force and
-   * acceleration boundary conditions. */
-  // Step 1: Calculate forces on each node from surrounding elements
-  // This accumulates all forces (internal, external, artificial viscosity)
-  printf("DEBUG: Calling CalcForceForNodes\n");
-  CalcForceForNodes(domain);
-  printf("DEBUG: CalcForceForNodes completed\n");
-
-#if USE_MPI  
-#ifdef SEDOV_SYNC_POS_VEL_EARLY
-   // For MPI: Start receiving position and velocity data from other processes
-   // This is done early to overlap communication with computation
-   CommRecv(*domain, MSG_SYNC_POS_VEL, 6,
-            domain->sizeX + 1, domain->sizeY + 1, domain->sizeZ + 1,
-            false, false);
-#endif
-#endif
-
-  // Step 2: Calculate accelerations for all nodes (F = ma -> a = F/m)
-  CalcAccelerationForNodes(domain,domain->streams[0]);
-
-  // Step 3: Apply boundary conditions to accelerations
-  // This enforces constraints like symmetry planes and free surfaces
-  ApplyAccelerationBoundaryConditionsForNodes(domain,domain->streams[0]);
-
-  // Step 4: Update node positions and velocities using calculated accelerations
-  // This applies the time integration scheme (leapfrog method)
-  CalcPositionAndVelocityForNodes(u_cut, domain,domain->streams[0]);
-
-#if USE_MPI
-#ifdef SEDOV_SYNC_POS_VEL_EARLY
-  // For MPI: Synchronize position and velocity data with neighboring processes
-  
-  // initialize raw device pointers for MPI communication
-  domain->d_x = domain->x;
-  domain->d_y = domain->y;
-  domain->d_z = domain->z;
-
-  domain->d_xd = domain->xd;
-  domain->d_yd = domain->yd;
-  domain->d_zd = domain->zd;
-
-  // Set up function pointers to access position and velocity components
-  fieldData[0] = &Domain::get_x;  // x-position
-  fieldData[1] = &Domain::get_y;  // y-position
-  fieldData[2] = &Domain::get_z;  // z-position
-  fieldData[3] = &Domain::get_xd; // x-velocity
-  fieldData[4] = &Domain::get_yd; // y-velocity
-  fieldData[5] = &Domain::get_zd; // z-velocity
-
-  // Send position and velocity data directly from GPU to other processes
-  CommSendGpu(*domain, MSG_SYNC_POS_VEL, 6, fieldData,
-           domain->sizeX + 1, domain->sizeY + 1, domain->sizeZ + 1,
-           false, false, domain->streams[2]);
-  
-  // Complete synchronization of position and velocity data
-  CommSyncPosVelGpu(*domain, &domain->streams[2]);
-#endif
-#endif
-
-  return;
-}
-// checkErrors is already defined above
-
-void CalcForceForNodes(Domain *domain)
-{
-#if USE_MPI  
-  CommRecv(*domain, MSG_COMM_SBN, 3,
-           domain->sizeX + 1, domain->sizeY + 1, domain->sizeZ + 1,
-           true, false) ;
-#endif
-
-  CalcVolumeForceForElems(domain,domain->streams[0]);
-
-  // moved here from the main loop to allow async execution with GPU work
-  TimeIncrement(domain);
-
-#if USE_MPI 
-  // initialize pointers
-  domain->d_fx = domain->fx;
-  domain->d_fy = domain->fy;
-  domain->d_fz = domain->fz;
-
-  Domain_member fieldData[3] ;
-  fieldData[0] = &Domain::get_fx ;
-  fieldData[1] = &Domain::get_fy ;
-  fieldData[2] = &Domain::get_fz ;
-
-  CommSendGpu(*domain, MSG_COMM_SBN, 3, fieldData,
-           domain->sizeX + 1, domain->sizeY + 1, domain->sizeZ + 1,
-           true, false, domain->streams[2]) ;
-  CommSBNGpu(*domain, 3, fieldData, &domain->streams[2]) ;
-#endif
-}
-
-
-// static inline
-/*
- * LagrangeElements - Performs element-centered calculations for one timestep
- *
- * This function handles the second phase of the Lagrangian simulation, focusing on
- * element (cell) calculations:
- * 1. Calculate kinematics (velocity gradients, strain rates)
- * 2. Compute artificial viscosity (q) for shock handling
- * 3. Apply material properties (equation of state)
- * 4. Update element volumes and related quantities
- *
- * The function manages temporary memory allocation/deallocation and MPI communication
- * of element-centered quantities between processes.
- */
-void LagrangeElements(Domain *domain)
-{
-  printf("DEBUG: Inside LagrangeElements\n");
-  fflush(stdout);
-  
-  // Calculate total elements including ghost elements for MPI
-  int allElem = domain->numElem +  /* local elem */
-                2*domain->sizeX*domain->sizeY + /* plane ghosts */
-                2*domain->sizeX*domain->sizeZ + /* row ghosts */
-                2*domain->sizeY*domain->sizeZ ; /* col ghosts */
-  
-  printf("DEBUG: Domain dimensions - sizeX=%d, sizeY=%d, sizeZ=%d\n", 
-         domain->sizeX, domain->sizeY, domain->sizeZ);
-  printf("DEBUG: Elements - local=%d, total with ghosts=%d\n", 
-         domain->numElem, allElem);
-  fflush(stdout);
-
-  // Allocate temporary arrays for this phase
-  printf("DEBUG: Allocating temporary arrays\n");
-  fflush(stdout);
-  
-  // vnew: new relative volume
-  cudaMalloc((void**)&domain->vnew, domain->numElem * sizeof(Real_t));
-  // Principal strain terms (diagonal components of strain tensor)
-  cudaMalloc((void**)&domain->dxx, domain->numElem * sizeof(Real_t));
-  cudaMalloc((void**)&domain->dyy, domain->numElem * sizeof(Real_t));
-  cudaMalloc((void**)&domain->dzz, domain->numElem * sizeof(Real_t));
-
-  // Coordinate gradients (spatial derivatives in each direction)
-  cudaMalloc((void**)&domain->delx_xi, domain->numElem * sizeof(Real_t));
-  cudaMalloc((void**)&domain->delx_eta, domain->numElem * sizeof(Real_t));
-  cudaMalloc((void**)&domain->delx_zeta, domain->numElem * sizeof(Real_t));
-
-  // Velocity gradients (for all elements including ghosts)
-  cudaMalloc((void**)&domain->delv_xi, allElem * sizeof(Real_t));
-  cudaMalloc((void**)&domain->delv_eta, allElem * sizeof(Real_t));
-  cudaMalloc((void**)&domain->delv_zeta, allElem * sizeof(Real_t));
-  
-  printf("DEBUG: Temporary arrays allocated successfully\n");
-  fflush(stdout);
-
-#if USE_MPI     
-  // For MPI: Start receiving monotonic q gradient data from other processes
-  CommRecv(*domain, MSG_MONOQ, 3,
-           domain->sizeX, domain->sizeY, domain->sizeZ,
-           true, true);
-  printf("DEBUG: MPI - Started receiving monotonic q gradient data\n");
-  fflush(stdout);
-#endif
-
-  /*********************************************/
-  /*  Calc Kinematics and Monotic Q Gradient   */
-  /*********************************************/
-  // Step A: Calculate velocity gradients and related terms
-  // This computes how quickly the element is deforming
-  printf("DEBUG: Calling CalcKinematicsAndMonotonicQGradient\n");
-  fflush(stdout);
-  
-  // Check if volo pointer is valid before calculation
-  if (domain->volo == nullptr) {
-    printf("ERROR: domain->volo is NULL before CalcKinematicsAndMonotonicQGradient\n");
-    fflush(stdout);
-  } else {
-    // Read first element of volo for debugging
-    Real_t firstVolo;
-    cudaError_t err = cudaMemcpy(&firstVolo, domain->volo, sizeof(Real_t), cudaMemcpyDeviceToHost);
-    if (err != cudaSuccess) {
-      printf("ERROR: Failed to read volo[0]: %s\n", cudaGetErrorString(err));
-    } else {
-      printf("DEBUG: First element volo[0] = %e before kinematics calculation\n", firstVolo);
-    }
-    fflush(stdout);
-  }
-  
-  CalcKinematicsAndMonotonicQGradient(domain,domain->streams[0]);
-  
-  printf("DEBUG: CalcKinematicsAndMonotonicQGradient completed\n");
-  fflush(stdout);
-
-#if USE_MPI      
-   // For MPI: Send calculated gradient data to other processes
-   Domain_member fieldData[3];
-
-   printf("DEBUG: MPI - Preparing to send monotonic q gradient data\n");
-   fflush(stdout);
-   
-   // Initialize raw device pointers for MPI communication
-   domain->d_delv_xi = domain->delv_xi;
-   domain->d_delv_eta = domain->delv_eta;
-   domain->d_delv_zeta = domain->delv_zeta;
-
-   // Set up function pointers for velocity gradient access
-   fieldData[0] = &Domain::get_delv_xi;
-   fieldData[1] = &Domain::get_delv_eta;
-   fieldData[2] = &Domain::get_delv_zeta;
-
-   // Send velocity gradients directly from GPU to other processes
-   CommSendGpu(*domain, MSG_MONOQ, 3, fieldData,
-            domain->sizeX, domain->sizeY, domain->sizeZ,
-            true, true, domain->streams[2]);
-   
-   // Complete monotonic q communication
-   CommMonoQGpu(*domain, domain->streams[2]);
-   
-   printf("DEBUG: MPI - Completed monotonic q communication\n");
-   fflush(stdout);
-#endif
-
-  // Free temporary arrays no longer needed
-  printf("DEBUG: Freeing first batch of temporary arrays (dxx, dyy, dzz)\n");
-  fflush(stdout);
-  
-  cudaFree(domain->dxx);
-  cudaFree(domain->dyy);
-  cudaFree(domain->dzz);
-
-  /**********************************
-  *    Calc Monotic Q Region
-  **********************************/
-  // Step B: Calculate artificial viscosity (q) for shock treatment
-  // This helps prevent numerical oscillations near shock fronts
-  printf("DEBUG: Calling CalcMonotonicQRegionForElems\n");
-  fflush(stdout);
-  
-  // Check domain->volo again
-  if (domain->volo != nullptr) {
-    Real_t firstVolo;
-    cudaError_t err = cudaMemcpy(&firstVolo, domain->volo, sizeof(Real_t), cudaMemcpyDeviceToHost);
-    if (err == cudaSuccess) {
-      printf("DEBUG: First element volo[0] = %e before MonotonicQ calculation\n", firstVolo);
-      fflush(stdout);
-    }
-  }
-  
-  CalcMonotonicQRegionForElems(domain,domain->streams[0]);
-  
-  printf("DEBUG: CalcMonotonicQRegionForElems completed\n");
-  fflush(stdout);
-
-  // Free more temporary arrays
-  printf("DEBUG: Freeing second batch of temporary arrays (delx_*, delv_*)\n");
-  fflush(stdout);
-  
-  cudaFree(domain->delx_xi);
-  cudaFree(domain->delx_eta);
-  cudaFree(domain->delx_zeta);
-
-  cudaFree(domain->delv_xi);
-  cudaFree(domain->delv_eta);
-  cudaFree(domain->delv_zeta);
-
-  // Step C: Apply material equation of state and update element volumes
-  // This calculates new pressures, energies, and volumes based on the
-  // material model (ideal gas for Sedov blast wave problem)
-  printf("DEBUG: Calling ApplyMaterialPropertiesAndUpdateVolume\n");
-  fflush(stdout);
-  
-  // Check domain->volo once more
-  if (domain->volo != nullptr) {
-    Real_t firstVolo;
-    cudaError_t err = cudaMemcpy(&firstVolo, domain->volo, sizeof(Real_t), cudaMemcpyDeviceToHost);
-    if (err == cudaSuccess) {
-      printf("DEBUG: First element volo[0] = %e before material properties application\n", firstVolo);
-      fflush(stdout);
-    }
-  }
-  
-  ApplyMaterialPropertiesAndUpdateVolume(domain,domain->streams[0]);
-  
-  printf("DEBUG: ApplyMaterialPropertiesAndUpdateVolume completed\n");
-  fflush(stdout);
-  
-  // Free the last temporary array
-  printf("DEBUG: Freeing last temporary array (vnew)\n");
-  cudaFree(domain->vnew);
-  printf("DEBUG: LagrangeElements function completed\n");
-  fflush(stdout);
-}
-// LagrangeNodal function already defined at line 1824
-
-// LagrangeElements function already defined at line 2950
-
-// Time increment calculation
+// Time increment calculation 
+// no stream used but event is used
 void TimeIncrement(Domain* domain)
 {
     // To make sure dtcourant and dthydro have been updated on host
@@ -461,9 +139,334 @@ void TimeIncrement(Domain* domain)
 }
 
 
+// checkErrors is already defined above
+
+void CalcForceForNodes(Domain *domain, cudaStream_t *streams) //Need up to 26 streams
+{
+#if USE_MPI  
+  CommRecv(*domain, MSG_COMM_SBN, 3,
+           domain->sizeX + 1, domain->sizeY + 1, domain->sizeZ + 1,
+           true, false) ;
+#endif
+
+  CalcVolumeForceForElems(domain,streams[0]);
+
+  // moved here from the main loop to allow async execution with GPU work
+  TimeIncrement(domain);
+
+#if USE_MPI 
+  // initialize pointers
+  domain->d_fx = domain->fx;
+  domain->d_fy = domain->fy;
+  domain->d_fz = domain->fz;
+
+  Domain_member fieldData[3] ;
+  fieldData[0] = &Domain::get_fx ;
+  fieldData[1] = &Domain::get_fy ;
+  fieldData[2] = &Domain::get_fz ;
+
+  CommSendGpu(*domain, MSG_COMM_SBN, 3, fieldData,
+           domain->sizeX + 1, domain->sizeY + 1, domain->sizeZ + 1,
+           true, false, streams[2]) ;
+  CommSBNGpu(*domain, 3, fieldData, streams) ;
+#endif
+}
+
+
+
+// static inline
+/*
+ * LagrangeNodal - Performs node-centered calculations for one timestep
+ *
+ * This function handles the first phase of the Lagrangian simulation:
+ * 1. Calculate forces at nodes from element contributions
+ * 2. Compute nodal accelerations based on forces and masses
+ * 3. Apply boundary conditions (e.g., symmetry, free surfaces)
+ * 4. Update node positions and velocities
+ * 5. Synchronize updated values between processes (for MPI)
+ *
+ * This phase focuses on the mesh nodes (vertices) rather than elements.
+ */
+void LagrangeNodal(Domain *domain, cudaStream_t *streams)// 0 2 0-26
+{
+  printf("DEBUG: Inside LagrangeNodal\n");
+  
+#ifdef SEDOV_SYNC_POS_VEL_EARLY
+   // Array of function pointers for accessing domain data during MPI communication
+   Domain_member fieldData[6];
+   printf("DEBUG: SEDOV_SYNC_POS_VEL_EARLY defined\n");
+#endif
+
+  // Get bulk viscosity cutoff parameter (controls artificial viscosity)
+  Real_t u_cut = domain->u_cut;
+  printf("DEBUG: Got u_cut = %e\n", u_cut);
+
+  /* time of boundary condition evaluation is beginning of step for force and
+   * acceleration boundary conditions. */
+  // Step 1: Calculate forces on each node from surrounding elements
+  // This accumulates all forces (internal, external, artificial viscosity)
+  printf("DEBUG: Calling CalcForceForNodes\n");
+  CalcForceForNodes(domain, streams);//up to 26 streams
+  printf("DEBUG: CalcForceForNodes completed\n");
+
+#if USE_MPI  
+#ifdef SEDOV_SYNC_POS_VEL_EARLY
+   // For MPI: Start receiving position and velocity data from other processes
+   // This is done early to overlap communication with computation
+   CommRecv(*domain, MSG_SYNC_POS_VEL, 6,
+            domain->sizeX + 1, domain->sizeY + 1, domain->sizeZ + 1,
+            false, false);
+#endif
+#endif
+
+  // Step 2: Calculate accelerations for all nodes (F = ma -> a = F/m)
+  CalcAccelerationForNodes(domain,streams[0]);
+
+  // Step 3: Apply boundary conditions to accelerations
+  // This enforces constraints like symmetry planes and free surfaces
+  ApplyAccelerationBoundaryConditionsForNodes(domain,streams[0]);
+
+  // Step 4: Update node positions and velocities using calculated accelerations
+  // This applies the time integration scheme (leapfrog method)
+  CalcPositionAndVelocityForNodes(u_cut, domain,streams[0]);
+
+#if USE_MPI
+#ifdef SEDOV_SYNC_POS_VEL_EARLY
+  // For MPI: Synchronize position and velocity data with neighboring processes
+  
+  // initialize raw device pointers for MPI communication
+  domain->d_x = domain->x;
+  domain->d_y = domain->y;
+  domain->d_z = domain->z;
+
+  domain->d_xd = domain->xd;
+  domain->d_yd = domain->yd;
+  domain->d_zd = domain->zd;
+
+  // Set up function pointers to access position and velocity components
+  fieldData[0] = &Domain::get_x;  // x-position
+  fieldData[1] = &Domain::get_y;  // y-position
+  fieldData[2] = &Domain::get_z;  // z-position
+  fieldData[3] = &Domain::get_xd; // x-velocity
+  fieldData[4] = &Domain::get_yd; // y-velocity
+  fieldData[5] = &Domain::get_zd; // z-velocity
+
+  // Send position and velocity data directly from GPU to other processes
+  CommSendGpu(*domain, MSG_SYNC_POS_VEL, 6, fieldData,
+           domain->sizeX + 1, domain->sizeY + 1, domain->sizeZ + 1,
+           false, false, streams[2]);
+  
+  // Complete synchronization of position and velocity data
+  CommSyncPosVelGpu(*domain, streams); //26 streams total with 6 faces, 12 edges, 8 corners
+#endif
+#endif
+
+  return;
+}
+
+
+// static inline
+/*
+ * LagrangeElements - Performs element-centered calculations for one timestep
+ *
+ * This function handles the second phase of the Lagrangian simulation, focusing on
+ * element (cell) calculations:
+ * 1. Calculate kinematics (velocity gradients, strain rates)
+ * 2. Compute artificial viscosity (q) for shock handling
+ * 3. Apply material properties (equation of state)
+ * 4. Update element volumes and related quantities
+ *
+ * The function manages temporary memory allocation/deallocation and MPI communication
+ * of element-centered quantities between processes.
+ */
+void LagrangeElements(Domain *domain, cudaStream_t stream_compute, cudaStream_t stream_communicate)
+{
+  printf("DEBUG: Inside LagrangeElements\n");
+  fflush(stdout);
+  
+  // Calculate total elements including ghost elements for MPI
+  int allElem = domain->numElem +  /* local elem */
+                2*domain->sizeX*domain->sizeY + /* plane ghosts */
+                2*domain->sizeX*domain->sizeZ + /* row ghosts */
+                2*domain->sizeY*domain->sizeZ ; /* col ghosts */
+  
+  printf("DEBUG: Domain dimensions - sizeX=%d, sizeY=%d, sizeZ=%d\n", 
+         domain->sizeX, domain->sizeY, domain->sizeZ);
+  printf("DEBUG: Elements - local=%d, total with ghosts=%d\n", 
+         domain->numElem, allElem);
+  fflush(stdout);
+
+  // Allocate temporary arrays for this phase
+  printf("DEBUG: Allocating temporary arrays\n");
+  fflush(stdout);
+  
+  // vnew: new relative volume
+  cudaMallocAsync((void**)&domain->vnew, domain->numElem * sizeof(Real_t), stream_compute);
+  // Principal strain terms (diagonal components of strain tensor)
+  cudaMallocAsync((void**)&domain->dxx, domain->numElem * sizeof(Real_t), stream_compute);
+  cudaMallocAsync((void**)&domain->dyy, domain->numElem * sizeof(Real_t), stream_compute);
+  cudaMallocAsync((void**)&domain->dzz, domain->numElem * sizeof(Real_t), stream_compute);
+
+  // Coordinate gradients (spatial derivatives in each direction)
+  cudaMallocAsync((void**)&domain->delx_xi, domain->numElem * sizeof(Real_t), stream_compute);
+  cudaMallocAsync((void**)&domain->delx_eta, domain->numElem * sizeof(Real_t), stream_compute);
+  cudaMallocAsync((void**)&domain->delx_zeta, domain->numElem * sizeof(Real_t), stream_compute);
+
+  // Velocity gradients (for all elements including ghosts)
+  cudaMallocAsync((void**)&domain->delv_xi, allElem * sizeof(Real_t), stream_compute);
+  cudaMallocAsync((void**)&domain->delv_eta, allElem * sizeof(Real_t), stream_compute);
+  cudaMallocAsync((void**)&domain->delv_zeta, allElem * sizeof(Real_t), stream_compute);
+  
+  printf("DEBUG: Temporary arrays allocated successfully\n");
+  fflush(stdout);
+
+#if USE_MPI     
+  // For MPI: Start receiving monotonic q gradient data from other processes
+  CommRecv(*domain, MSG_MONOQ, 3,
+           domain->sizeX, domain->sizeY, domain->sizeZ,
+           true, true);
+  printf("DEBUG: MPI - Started receiving monotonic q gradient data\n");
+  fflush(stdout);
+#endif
+
+  /*********************************************/
+  /*  Calc Kinematics and Monotic Q Gradient   */
+  /*********************************************/
+  // Step A: Calculate velocity gradients and related terms
+  // This computes how quickly the element is deforming
+  printf("DEBUG: Calling CalcKinematicsAndMonotonicQGradient\n");
+  fflush(stdout);
+  
+  // Check if volo pointer is valid before calculation
+  if (domain->volo == nullptr) {
+    printf("ERROR: domain->volo is NULL before CalcKinematicsAndMonotonicQGradient\n");
+    fflush(stdout);
+  } else {
+    // Read first element of volo for debugging
+    Real_t firstVolo;
+    cudaError_t err = cudaMemcpyAsync(&firstVolo, domain->volo, sizeof(Real_t), cudaMemcpyDeviceToHost, stream_compute);
+    cudaStreamSynchronize(stream_compute);
+    if (err == cudaSuccess) {
+      printf("DEBUG: First element volo[0] = %e before kinematics calculation\n", firstVolo);
+    }
+    fflush(stdout);
+  }
+  
+  CalcKinematicsAndMonotonicQGradient(domain,stream_compute);
+  
+  printf("DEBUG: CalcKinematicsAndMonotonicQGradient completed\n");
+  fflush(stdout);
+
+#if USE_MPI      
+   // For MPI: Send calculated gradient data to other processes
+   Domain_member fieldData[3];
+
+   printf("DEBUG: MPI - Preparing to send monotonic q gradient data\n");
+   fflush(stdout);
+   
+   // Initialize raw device pointers for MPI communication
+   domain->d_delv_xi = domain->delv_xi;
+   domain->d_delv_eta = domain->delv_eta;
+   domain->d_delv_zeta = domain->delv_zeta;
+
+   // Set up function pointers for velocity gradient access
+   fieldData[0] = &Domain::get_delv_xi;
+   fieldData[1] = &Domain::get_delv_eta;
+   fieldData[2] = &Domain::get_delv_zeta;
+
+   // Send velocity gradients directly from GPU to other processes
+   CommSendGpu(*domain, MSG_MONOQ, 3, fieldData,
+            domain->sizeX, domain->sizeY, domain->sizeZ,
+            true, true, stream_communicate);
+   
+   // Complete monotonic q communication
+   CommMonoQGpu(*domain, stream_communicate);
+   
+   printf("DEBUG: MPI - Completed monotonic q communication\n");
+   fflush(stdout);
+#endif
+
+  // Free temporary arrays no longer needed
+  printf("DEBUG: Freeing first batch of temporary arrays (dxx, dyy, dzz)\n");
+  fflush(stdout);
+  
+  cudaFreeAsync(domain->dxx, stream_compute);
+  cudaFreeAsync(domain->dyy, stream_compute);
+  cudaFreeAsync(domain->dzz, stream_compute);
+
+  /**********************************
+  *    Calc Monotic Q Region
+  **********************************/
+  // Step B: Calculate artificial viscosity (q) for shock treatment
+  // This helps prevent numerical oscillations near shock fronts
+  printf("DEBUG: Calling CalcMonotonicQRegionForElems\n");
+  fflush(stdout);
+  
+  // Check domain->volo again
+  if (domain->volo != nullptr) {
+    Real_t firstVolo;
+    cudaError_t err = cudaMemcpyAsync(&firstVolo, domain->volo, sizeof(Real_t), cudaMemcpyDeviceToHost, stream_compute);
+    cudaStreamSynchronize(stream_compute);
+    if (err == cudaSuccess) {
+      printf("DEBUG: First element volo[0] = %e before MonotonicQ calculation\n", firstVolo);
+      fflush(stdout);
+    }
+  }
+  
+  CalcMonotonicQRegionForElems(domain,stream_compute);
+  
+  printf("DEBUG: CalcMonotonicQRegionForElems completed\n");
+  fflush(stdout);
+
+  // Free more temporary arrays
+  printf("DEBUG: Freeing second batch of temporary arrays (delx_*, delv_*)\n");
+  fflush(stdout);
+  
+  cudaFreeAsync(domain->delx_xi, stream_compute);
+  cudaFreeAsync(domain->delx_eta, stream_compute);
+  cudaFreeAsync(domain->delx_zeta, stream_compute);
+
+  cudaFreeAsync(domain->delv_xi, stream_compute);
+  cudaFreeAsync(domain->delv_eta, stream_compute);
+  cudaFreeAsync(domain->delv_zeta, stream_compute);
+
+  // Step C: Apply material equation of state and update element volumes
+  // This calculates new pressures, energies, and volumes based on the
+  // material model (ideal gas for Sedov blast wave problem)
+  printf("DEBUG: Calling ApplyMaterialPropertiesAndUpdateVolume\n");
+  fflush(stdout);
+  
+  // Check domain->volo once more
+  if (domain->volo != nullptr) {
+    Real_t firstVolo;
+    cudaError_t err = cudaMemcpyAsync(&firstVolo, domain->volo, sizeof(Real_t), cudaMemcpyDeviceToHost, stream_compute);
+    cudaStreamSynchronize(stream_compute);
+    if (err == cudaSuccess) {
+      printf("DEBUG: First element volo[0] = %e before material properties application\n", firstVolo);
+      fflush(stdout);
+    }
+  }
+  
+  ApplyMaterialPropertiesAndUpdateVolume(domain,stream_compute);
+  
+  printf("DEBUG: ApplyMaterialPropertiesAndUpdateVolume completed\n");
+  fflush(stdout);
+  
+  // Free the last temporary array
+  printf("DEBUG: Freeing last temporary array (vnew)\n");
+  cudaFreeAsync(domain->vnew, stream_compute);
+  printf("DEBUG: LagrangeElements function completed\n");
+  fflush(stdout);
+}
+// LagrangeNodal function already defined at line 1824
+
+// LagrangeElements function already defined at line 2950
+
+
+
 
 // Lagrangian leap-frog time integration
-void LagrangeLeapFrog(Domain* domain)
+void LagrangeLeapFrog(Domain* domain, cudaStream_t *streams)
 {
    printf("DEBUG: Inside LagrangeLeapFrog\n");
    
@@ -475,7 +478,7 @@ void LagrangeLeapFrog(Domain* domain)
    // - Applies boundary conditions (symmetry, free surfaces)
    // - Updates positions and velocities using time integration
    printf("DEBUG: Calling LagrangeNodal\n");
-   LagrangeNodal(domain);
+   LagrangeNodal(domain, streams);
    printf("DEBUG: LagrangeNodal completed\n");
 
    /* calculate element quantities (i.e. velocity gradient & q), and update
@@ -486,7 +489,7 @@ void LagrangeLeapFrog(Domain* domain)
    // - Updates element volumes and material states
    // - Applies equation of state to compute new pressures and energies
    printf("DEBUG: Calling LagrangeElements\n");
-   LagrangeElements(domain);
+   LagrangeElements(domain, streams[0], streams[2]);
    printf("DEBUG: LagrangeElements completed\n");
 
    // Phase 3: Calculate new timestep based on Courant-Friedrichs-Lewy (CFL) condition
@@ -494,6 +497,6 @@ void LagrangeLeapFrog(Domain* domain)
    // - Uses both velocity (Courant) and volume change (hydro) constraints
    // - Selects the most restrictive timestep across all elements
    printf("DEBUG: Calling CalcTimeConstraintsForElems\n");
-   CalcTimeConstraintsForElems(domain, domain->streams);
+   CalcTimeConstraintsForElems(domain, streams);
    printf("DEBUG: CalcTimeConstraintsForElems completed\n");
 }

@@ -965,7 +965,10 @@ void CommSendGpu(Domain& domain, int msgType,
  * @param xferFields Number of fields to transfer
  * @param fieldData Pointers to domain data fields being transferred
  * @param streams Array of CUDA streams for parallel execution
+ * this function need 26 stremas, with 6 faces, 12 edges, 8 corners,
+ * TODO, do we need that much streams?
  */
+
 void CommSBNGpu(Domain& domain, int xferFields, Domain_member *fieldData, cudaStream_t *streams) {
 
    if (domain.numRanks() == 1)
@@ -1419,7 +1422,7 @@ void CommSBNGpu(Domain& domain, int xferFields, Domain_member *fieldData, cudaSt
 }
 
 /******************************************/
-
+// 26 streams total with 6 faces, 12 edges, 8 corners
 void CommSyncPosVelGpu(Domain& domain, cudaStream_t *streams) {
 
    if (domain.numRanks() == 1)

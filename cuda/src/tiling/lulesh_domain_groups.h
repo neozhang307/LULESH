@@ -150,7 +150,7 @@ public:
         // For each domain, execute a timestep
         for (Domain* domain : domains) {
             if (domain != nullptr) {
-                LagrangeLeapFrog(domain);
+                LagrangeLeapFrog(domain, domain->streams);
             }
         }
     }

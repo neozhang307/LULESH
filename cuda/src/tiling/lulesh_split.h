@@ -380,14 +380,14 @@ void InitStressTermsForElems(Domain& domain, Real_t *sigxx, Real_t *sigyy, Real_
 void IntegrateStressForElems(Domain& domain, Real_t *sigxx, Real_t *sigyy, Real_t *sigzz, Real_t *determ);
 // void CalcHourglassControlForElems(Domain& domain, Real_t *hgcoef);
 // void CalcVolumeForceForElems(Domain& domain, cudaStream_t stream);
-void CalcForceForNodes(Domain* domain);
+void CalcForceForNodes(Domain* domain, cudaStream_t *streams);
 // void CalcMonotonicQRegionForElems(Domain& domain, Int_t r, Int_t rep, cudaStream_t stream);
 
 // Main execution functions
 void TimeIncrement(Domain* domain);
-void LagrangeLeapFrog(Domain* domain);
-void LagrangeNodal(Domain* domain);
-void LagrangeElements(Domain* domain);
+void LagrangeLeapFrog(Domain* domain, cudaStream_t *streams);
+void LagrangeNodal(Domain* domain, cudaStream_t *streams);
+void LagrangeElements(Domain* domain, cudaStream_t stream_compute, cudaStream_t stream_communicate);
 
 void ApplyMaterialPropertiesAndUpdateVolume(Domain *domain, cudaStream_t stream);
 void CalcPositionAndVelocityForNodes(const Real_t u_cut, Domain* domain, cudaStream_t stream);
