@@ -67,7 +67,7 @@ Additional BSD Notice
 #include <cuda.h>
 
 #include "lulesh_split.h"
-#include "lulesh_comm.h"
+#include "lulesh_computation.h"
 #include "utility/util.h"
 #include "utility/sm_utils.inl"
 // #include "utility/allocator.h"
