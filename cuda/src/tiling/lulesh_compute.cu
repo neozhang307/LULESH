@@ -88,9 +88,9 @@ void CalcVolumeForceForElems(const Real_t hgcoef, Domain *domain, cudaStream_t s
     Real_t* fx_elem;
     Real_t* fy_elem;
     Real_t* fz_elem;
-    cudaMalloc((void**)&fx_elem, padded_numElem*8*sizeof(Real_t));
-    cudaMalloc((void**)&fy_elem, padded_numElem*8*sizeof(Real_t));
-    cudaMalloc((void**)&fz_elem, padded_numElem*8*sizeof(Real_t));
+    cudaMallocAsync((void**)&fx_elem, padded_numElem*8*sizeof(Real_t), stream);
+    cudaMallocAsync((void**)&fy_elem, padded_numElem*8*sizeof(Real_t), stream);
+    cudaMallocAsync((void**)&fz_elem, padded_numElem*8*sizeof(Real_t), stream);
 #else
     MimicFill(domain->fx, domain->numNode, Real_t(0.), stream);
     MimicFill(domain->fy, domain->numNode, Real_t(0.), stream);
@@ -180,9 +180,9 @@ void CalcVolumeForceForElems(const Real_t hgcoef, Domain *domain, cudaStream_t s
       num_threads
     );
 
-    cudaFree(fx_elem);
-    cudaFree(fy_elem);
-    cudaFree(fz_elem);
+    cudaFreeAsync(fx_elem, stream);
+    cudaFreeAsync(fy_elem, stream);
+    cudaFreeAsync(fz_elem, stream);
 
 #endif // ifdef DOUBLE_PRECISION
    return ;
@@ -328,7 +328,8 @@ void CalcKinematicsAndMonotonicQGradient(Domain *domain, cudaStream_t stream)
     
     // Read the first element of volo for debugging
     Real_t firstVolo;
-    cudaError_t err = cudaMemcpy(&firstVolo, domain->volo, sizeof(Real_t), cudaMemcpyDeviceToHost);
+    cudaError_t err = cudaMemcpyAsync(&firstVolo, domain->volo, sizeof(Real_t), cudaMemcpyDeviceToHost, stream);
+    cudaStreamSynchronize(stream);
     if (err != cudaSuccess) {
         printf("ERROR: Failed to read volo[0] inside CalcKinematicsAndMonotonicQGradient: %s\n", 
                cudaGetErrorString(err));
@@ -408,7 +409,8 @@ void CalcMonotonicQRegionForElems(Domain *domain, cudaStream_t stream)
     
     // Read the first element of volo for debugging
     Real_t firstVolo;
-    cudaError_t err = cudaMemcpy(&firstVolo, domain->volo, sizeof(Real_t), cudaMemcpyDeviceToHost);
+    cudaError_t err = cudaMemcpyAsync(&firstVolo, domain->volo, sizeof(Real_t), cudaMemcpyDeviceToHost, stream);
+    cudaStreamSynchronize(stream);
     if (err != cudaSuccess) {
         printf("ERROR: Failed to read volo[0] inside CalcMonotonicQRegionForElems: %s\n", 
                cudaGetErrorString(err));
