@@ -546,6 +546,7 @@ void ApplyMaterialPropertiesAndUpdateVolume(Domain *domain, cudaStream_t stream)
  * The timestep calculation is a critical part of explicit simulations to ensure
  * numerical stability. If the timestep is too large, the simulation can become unstable.
  */
+ // at most 2 streams
 void CalcTimeConstraintsForElems(Domain* domain, cudaStream_t* streams)
 {
     printf("DEBUG: Entered CalcTimeConstraintsForElems\n");
@@ -600,8 +601,8 @@ void CalcTimeConstraintsForElems(Domain* domain, cudaStream_t* streams)
     // Allocate device memory for per-block minimum timesteps
     Real_t* dev_mindtcourant;
     Real_t* dev_mindthydro;
-    cudaMalloc((void**)&dev_mindtcourant, dimGrid * sizeof(Real_t));
-    cudaMalloc((void**)&dev_mindthydro, dimGrid * sizeof(Real_t));
+    cudaMallocAsync((void**)&dev_mindtcourant, dimGrid * sizeof(Real_t), streams[0]);
+    cudaMallocAsync((void**)&dev_mindthydro, dimGrid * sizeof(Real_t), streams[0]);
 
     // Launch kernel to compute per-block minimum timesteps
     // Each block processes a portion of the elements and finds local minimums
@@ -613,15 +614,15 @@ void CalcTimeConstraintsForElems(Domain* domain, cudaStream_t* streams)
     // TODO: if dimGrid < 1024, should launch less threads
     // Launch second kernel to find global minimum across all blocks
     // This kernel performs the final reduction and stores results in domain
-    CalcMinDtOneBlock<max_dimGrid> <<<2, max_dimGrid, max_dimGrid*sizeof(Real_t), streams[1]>>>
+    CalcMinDtOneBlock<max_dimGrid> <<<2, max_dimGrid, max_dimGrid*sizeof(Real_t), streams[0]>>>
         (dev_mindthydro, dev_mindtcourant, domain->dtcourant_h, domain->dthydro_h, dimGrid);
 
     // Record event to track when timestep calculation is complete
     // This allows other operations to wait for this calculation to finish
-    cudaEventRecord(domain->time_constraint_computed, streams[1]);
+    cudaEventRecord(domain->time_constraint_computed, streams[0]);
 
     // Free temporary device memory
-    cudaFree(dev_mindtcourant);
-    cudaFree(dev_mindthydro);
+    cudaFreeAsync(dev_mindtcourant, streams[0]);
+    cudaFreeAsync(dev_mindthydro, streams[0]);
 }
 

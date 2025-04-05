@@ -142,6 +142,7 @@ void cuda_init(int rank)
 
 void write_solution(Domain* locDom)
 {
+  cudaDeviceSynchronize();
   // Create host vectors and allocate memory
   Vector_h<Real_t> x_h;
   Vector_h<Real_t> y_h;
@@ -177,6 +178,7 @@ void VerifyAndWriteFinalOutput(Real_t elapsed_time,
                                Int_t numRanks, 
                                bool structured)
 {
+  cudaDeviceSynchronize();
    size_t free_mem, total_mem, used_mem;
    cudaMemGetInfo(&free_mem, &total_mem);
    used_mem= total_mem - free_mem;
@@ -401,12 +403,13 @@ int main(int argc, char *argv[])
   }
 
   // Start CUDA profiling for performance analysis
+  cudaDeviceSynchronize();
   cudaProfilerStart();
 
   // Start timer for measuring performance
 
-   timeval start;
-   gettimeofday(&start, NULL) ;
+  timeval start;
+  gettimeofday(&start, NULL) ;
 
   // Main simulation loop - continues until simulation time reaches stop time
   printf("DEBUG: Starting main simulation loop, time=%e, stoptime=%e\n", 

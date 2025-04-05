@@ -663,7 +663,7 @@ Domain *NewDomain(char* argv[], Int_t numRanks, Index_t colLoc,
     domain->streams[0] = NULL;
     
     // Create other streams (1 and 2)
-    for (Int_t i=1; i<domain->max_streams; i++) {
+    for (Int_t i=0; i<domain->max_streams; i++) {
       printf("DEBUG: Creating stream %d\n", i);
       fflush(stdout);
       cudaError_t err = cudaStreamCreate(&(domain->streams[i]));

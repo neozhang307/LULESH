@@ -478,7 +478,11 @@ void LagrangeLeapFrog(Domain* domain, cudaStream_t *streams)
    // - Applies boundary conditions (symmetry, free surfaces)
    // - Updates positions and velocities using time integration
    printf("DEBUG: Calling LagrangeNodal\n");
+   cudaStream_t tmp=streams[0];
+   
    LagrangeNodal(domain, streams);
+   
+  //  cudaDeviceSynchronize();
    printf("DEBUG: LagrangeNodal completed\n");
 
    /* calculate element quantities (i.e. velocity gradient & q), and update
@@ -489,7 +493,10 @@ void LagrangeLeapFrog(Domain* domain, cudaStream_t *streams)
    // - Updates element volumes and material states
    // - Applies equation of state to compute new pressures and energies
    printf("DEBUG: Calling LagrangeElements\n");
-   LagrangeElements(domain, streams[0], streams[2]);
+   
+   LagrangeElements(domain, tmp, streams[2]);
+  //  cudaDeviceSynchronize();
+
    printf("DEBUG: LagrangeElements completed\n");
 
    // Phase 3: Calculate new timestep based on Courant-Friedrichs-Lewy (CFL) condition
@@ -497,6 +504,8 @@ void LagrangeLeapFrog(Domain* domain, cudaStream_t *streams)
    // - Uses both velocity (Courant) and volume change (hydro) constraints
    // - Selects the most restrictive timestep across all elements
    printf("DEBUG: Calling CalcTimeConstraintsForElems\n");
+  //  streams[0]=NULL;
    CalcTimeConstraintsForElems(domain, streams);
+  //  cudaDeviceSynchronize();
    printf("DEBUG: CalcTimeConstraintsForElems completed\n");
 }
